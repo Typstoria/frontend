@@ -1,13 +1,13 @@
-/* Provisional foundation; the design brief is the source for the next design pass. */
+/* Light blue foundation aligned with the supplied M01–M04 mockups. */
 :root {
-  --color-background: #f4f5f7;
+  --color-background: #f3f8fb;
   --color-surface: #ffffff;
-  --color-text: #202735;
-  --color-muted: #626b7b;
-  --color-border: #dce0e7;
-  --color-primary: #4655a5;
-  --color-primary-hover: #354285;
-  --color-focus: #7787e5;
+  --color-text: #102b49;
+  --color-muted: #58718e;
+  --color-border: #d3e1ed;
+  --color-primary: #007fa6;
+  --color-primary-hover: #006987;
+  --color-focus: #087caa;
   --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-code: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
   --radius-control: 6px;

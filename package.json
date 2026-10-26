@@ -7,6 +7,7 @@
     "node": ">=24.15.0 <25"
   },
   "scripts": {
+    "api:types": "node scripts/generate-api-types.mjs",
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
@@ -34,6 +35,7 @@
     "eslint-config-prettier": "10.1.8",
     "eslint-plugin-vue": "10.11.1",
     "globals": "17.13.0",
+    "openapi-typescript": "7.13.0",
     "prettier": "3.9.10",
     "typescript": "5.9.3",
     "typescript-eslint": "8.72.0",

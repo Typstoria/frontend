@@ -48,3 +48,7 @@ Exact installed versions — у package.json/package-lock.json; сумісніс
 - [PDF.js](https://mozilla.github.io/pdf.js/getting_started/): display/viewer layers та worker для PDF preview.
 
 Поточні версії пакетів і peer/engine requirements перевірено через npm registry під час створення lockfile. Ці джерела визначають можливості бібліотек, але не є доказом реалізації Typstoria integration.
+
+## 5. Реалізація FE1
+
+Користувач надав M01–M04 і доручив наступний крок реалізації з перевіркою desktop/mobile. Auth реалізовано за M04 із збереженням backend policy; runtime credential лишається у приватній пам’яті. Типи фактичного OpenAPI генеруються вручну через dev-команду `api:types`; це не генератор API й не runtime залежність браузера.
