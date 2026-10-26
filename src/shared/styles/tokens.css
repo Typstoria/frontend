@@ -1,0 +1,15 @@
+/* Provisional foundation; the design brief is the source for the next design pass. */
+:root {
+  --color-background: #f4f5f7;
+  --color-surface: #ffffff;
+  --color-text: #202735;
+  --color-muted: #626b7b;
+  --color-border: #dce0e7;
+  --color-primary: #4655a5;
+  --color-primary-hover: #354285;
+  --color-focus: #7787e5;
+  --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-code: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+  --radius-control: 6px;
+  --radius-panel: 8px;
+}
