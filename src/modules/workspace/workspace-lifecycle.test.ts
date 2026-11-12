@@ -34,6 +34,8 @@ const draft: Recovery = {
   pending: null,
   status: 'dirty',
   conflict: null,
+  structure: [],
+  structureLabels: [],
 };
 let unregister = () => {};
 afterEach(() => {

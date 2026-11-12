@@ -6,7 +6,13 @@ import { parseProject } from '../projects/projects-api';
 export type Snapshot = components['schemas']['ProjectStateDto'];
 export type TextFile = components['schemas']['ProjectTextFileDto'];
 export type TextChange = components['schemas']['UpdateTextDto'];
-export type Changes = { baseRevisionId: number; operations: TextChange[] };
+export type StructureChange =
+  | components['schemas']['CreateTextFileDto']
+  | components['schemas']['RenameFileDto']
+  | components['schemas']['DeleteFileDto']
+  | components['schemas']['SetEntrypointDto'];
+export type FileChange = TextChange | StructureChange;
+export type Changes = { baseRevisionId: number; operations: FileChange[] };
 export type SaveResult = components['schemas']['ProjectChangesResultDto'];
 type Request = (path: string, options?: Omit<RequestOptions, 'accessToken'>) => Promise<unknown>;
 const record = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null;
@@ -97,7 +103,11 @@ export function parseText(v: unknown, fileId: number, revisionId: number): TextF
     invalid();
   return { ...file, revisionId, content: v.content };
 }
-export function parseSaved(v: unknown, projectId: number): SaveResult {
+export function parseSaved(
+  v: unknown,
+  projectId: number,
+  operations?: readonly FileChange[],
+): SaveResult {
   if (
     !record(v) ||
     v.projectId !== projectId ||
@@ -105,26 +115,54 @@ export function parseSaved(v: unknown, projectId: number): SaveResult {
     !validId(v.revisionNumber) ||
     !validId(v.mainFileId) ||
     !Array.isArray(v.createdFiles) ||
-    v.createdFiles.length !== 0 ||
     !hash(v.manifestHash) ||
     !syncStatus(v.historySyncStatus)
   )
     invalid();
+  const createdFiles = v.createdFiles.map((file: unknown) => {
+    if (!record(file) || !validId(file.fileId) || typeof file.path !== 'string' || !file.path)
+      invalid();
+    return { fileId: file.fileId, path: file.path };
+  });
+  if (
+    new Set(createdFiles.map((file) => file.fileId)).size !== createdFiles.length ||
+    new Set(createdFiles.map((file) => file.path)).size !== createdFiles.length
+  )
+    invalid();
+  if (operations) {
+    const paths = operations
+      .filter((op) => op.type === 'createFile')
+      .map((op) => op.path.normalize('NFC'));
+    if (
+      paths.length !== createdFiles.length ||
+      createdFiles.some((file) => !paths.includes(file.path))
+    )
+      invalid();
+  }
   return {
     projectId,
     revisionId: v.revisionId,
     revisionNumber: v.revisionNumber,
     mainFileId: v.mainFileId,
-    createdFiles: [],
+    createdFiles,
     manifestHash: v.manifestHash,
     historySyncStatus: v.historySyncStatus as SaveResult['historySyncStatus'],
   };
 }
 export function createWorkspaceApi(request: Request) {
   return {
-    async state(projectId: number, signal: AbortSignal) {
+    async state(projectId: number, signal: AbortSignal, revisionId?: number) {
       if (!validId(projectId)) throw new Error('Invalid project ID');
-      return parseSnapshot(await request(`/projects/${projectId}/state`, { signal }), projectId);
+      if (revisionId !== undefined && !validId(revisionId)) throw new Error('Invalid revision ID');
+      const snapshot = parseSnapshot(
+        await request(`/projects/${projectId}/state`, {
+          signal,
+          ...(revisionId === undefined ? {} : { query: { revisionId } }),
+        }),
+        projectId,
+      );
+      if (revisionId !== undefined && snapshot.revision.id !== revisionId) invalid();
+      return snapshot;
     },
     async text(projectId: number, fileId: number, revisionId: number, signal: AbortSignal) {
       if (![projectId, fileId, revisionId].every(validId)) throw new Error('Invalid ID');
@@ -143,6 +181,7 @@ export function createWorkspaceApi(request: Request) {
           signal,
         }),
         projectId,
+        body.operations,
       );
     },
   };

@@ -442,3 +442,112 @@
     font-size: 14px;
   }
 }
+.editor-files-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 40px;
+  padding: 0 8px 0 16px;
+}
+.editor-files-heading h2 {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-muted);
+}
+.file-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  min-height: 36px;
+  padding: 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-muted);
+}
+.file-icon-button svg {
+  width: 18px;
+  height: 18px;
+}
+.file-icon-button:hover:not(:disabled),
+.file-icon-button[aria-expanded='true'] {
+  background: #e8f2f6;
+  color: var(--color-primary);
+}
+.file-icon-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.file-menu-host {
+  position: relative;
+  align-self: center;
+  margin-left: auto;
+  margin-right: 6px;
+  flex-shrink: 0;
+}
+.file-action-list {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 20;
+  width: min(230px, calc(100vw - 24px));
+  padding: 4px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface);
+  box-shadow: 0 8px 24px #102b4920;
+}
+.file-action-list button {
+  display: block;
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 3px;
+  text-align: left;
+  background: transparent;
+  color: var(--color-text);
+  font-size: 13px;
+}
+.file-action-list button:hover,
+.file-action-list button:focus-visible {
+  background: var(--color-background);
+}
+.file-action-list .danger-text {
+  color: #a03036;
+}
+.file-main {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--color-muted);
+  flex-shrink: 0;
+}
+.drawer-new {
+  position: absolute;
+  top: 8px;
+  right: 52px;
+  min-height: 40px;
+  width: 40px;
+}
+@media (max-width: 720px) {
+  .file-icon-button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .file-action-list button {
+    min-height: 44px;
+  }
+  .drawer-new {
+    top: 6px;
+  }
+}
+.editor-notice-detail {
+  flex: 1 1 260px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.editor-notice-detail ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+}

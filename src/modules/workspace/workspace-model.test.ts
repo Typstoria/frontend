@@ -146,7 +146,10 @@ describe('workspace autosave', () => {
     expect(state.files[1]).toEqual({ base: 'first', content: 'later' });
     await vi.advanceTimersByTimeAsync(1000);
     expect(vi.mocked(api.save).mock.calls[2]![2]).not.toBe(first[2]);
-    expect(vi.mocked(api.save).mock.calls[2]![1].operations[0]!.content).toBe('later');
+    expect(vi.mocked(api.save).mock.calls[2]![1].operations[0]).toMatchObject({
+      type: 'updateText',
+      content: 'later',
+    });
   });
   it('keeps base/local on conflict and requires explicit merging against the remote snapshot', async () => {
     vi.useFakeTimers();

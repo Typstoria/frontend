@@ -7,6 +7,7 @@ const props = defineProps<{
   selectedId: number;
   dirtyIds: number[];
   collapsedPaths: string[];
+  mainFileId: number;
 }>();
 const emit = defineEmits<{ select: [fileId: number]; toggle: [path: string] }>();
 type Node = { path: string; name: string; depth: number; file?: Snapshot['tree'][number] };
@@ -84,6 +85,9 @@ const rows = computed(() => {
           <path d="M4 2h5l3 3v9H4zM9 2v4h3" />
         </svg>
         <span class="workspace-file-name">{{ node.name }}</span>
+        <span v-if="node.file?.fileId === mainFileId" class="file-main" aria-label="Головний файл"
+          >головний</span
+        >
         <span
           v-if="node.file && dirtyIds.includes(node.file.fileId)"
           class="file-dirty"
