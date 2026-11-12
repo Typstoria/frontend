@@ -16,6 +16,7 @@ export interface RequestOptions {
   accessToken?: string;
   idempotencyKey?: string;
   signal?: AbortSignal;
+  query?: Readonly<Record<string, string | number>>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -38,7 +39,10 @@ export function createApiClient(baseUrl: string, transport: typeof fetch = fetch
     if (options.idempotencyKey) headers.set('Idempotency-Key', options.idempotencyKey);
 
     const timeout = AbortSignal.timeout(15_000);
-    const response = await transport(`${baseUrl.replace(/\/$/, '')}${path}`, {
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(options.query ?? {})) query.set(key, String(value));
+    const search = query.size ? `?${query}` : '';
+    const response = await transport(`${baseUrl.replace(/\/$/, '')}${path}${search}`, {
       method: options.method ?? 'GET',
       headers,
       ...(options.body !== undefined ? { body: JSON.stringify(options.body) } : {}),

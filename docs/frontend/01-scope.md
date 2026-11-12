@@ -12,15 +12,15 @@ Typstoria — вебсередовище для технічної докуме�
 
 Номери F/N — з [бекенд-вимог](https://github.com/Typstoria/backend/blob/main/docs/backend/01-scope.md), без дублювання другого реєстру.
 
-| Група             | Що має бути у вебі                                                             | Вимоги бекенду     |
-| ----------------- | ------------------------------------------------------------------------------ | ------------------ |
-| Обліковий запис   | Register/login/logout, verify/reset, Google login та явне linking              | F01                |
-| Проєкти           | Приватний список, створення, назва, видалення, дерево та entrypoint            | F02, F04, F08      |
-| Редактор і PDF    | Редагування, save, compile, diagnostics, outline, completion/format/navigation | F05, F11, F16      |
-| Review та історія | Повний diff proposal, validate/accept/reject/stale; порівняння і restore       | F09, F10           |
-| Контекст          | Текст, матеріали та витяги, пошук, анотації                                    | F03, F12, F13      |
-| Шаблони та архіви | Системні/власні шаблони, share/copy/revoke, ZIP import/export                  | F04, F14, F15, F17 |
-| Інтеграції        | Інструкції MCP, PAT, OAuth consent/revoke, GitHub backup                       | F06, F07, F18, F19 |
+| Група             | Що має бути у вебі                                                              | Вимоги бекенду     |
+| ----------------- | ------------------------------------------------------------------------------- | ------------------ |
+| Обліковий запис   | Register/login/logout, verify/reset, Google login; без керування прив’язуванням | F01                |
+| Проєкти           | Приватний список, створення, назва, видалення, дерево та entrypoint             | F02, F04, F08      |
+| Редактор і PDF    | Редагування, save, compile, diagnostics, outline, completion/format/navigation  | F05, F11, F16      |
+| Review та історія | Повний diff proposal, validate/accept/reject/stale; порівняння і restore        | F09, F10           |
+| Контекст          | Текст, матеріали та витяги, пошук, анотації                                     | F03, F12, F13      |
+| Шаблони та архіви | Системні/власні шаблони, share/copy/revoke, ZIP import/export                   | F04, F14, F15, F17 |
+| Інтеграції        | Інструкції MCP, PAT, OAuth consent/revoke, GitHub backup                        | F06, F07, F18, F19 |
 
 Скорочений набір мокапів не скорочує погоджений функціональний обсяг бекенду. Реалізація йде інкрементами; поточна задача не включає завершення всіх цих функцій.
 

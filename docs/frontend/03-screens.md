@@ -4,22 +4,22 @@
 
 ## 1. Карта екранів
 
-| Екран                     | Цільовий маршрут                             | Основні дії                                         |
-| ------------------------- | -------------------------------------------- | --------------------------------------------------- |
-| Вхід/реєстрація           | `/auth/login`, `/auth/register`              | Email/password, Google, verify/resend guidance      |
-| Посилання з листів        | `/auth/verify-email`, `/auth/reset-password` | Явне підтвердження або новий пароль                 |
-| Відновлення               | `/auth/forgot-password`                      | Generic відповідь, cooldown                         |
-| Проєкти                   | `/projects`                                  | Пошук, створення, шаблон, імпорт, rename/delete     |
-| Робочий простір           | `/projects/:projectId`                       | Файли, текст, PDF, контекст, структура, annotations |
-| Пропозиція                | `/projects/:projectId/proposals/:proposalId` | Diff, validation, candidate PDF, accept/reject      |
-| Історія                   | `/projects/:projectId/history`               | Read-only версія, diff, restore як нова версія      |
-| Шаблони                   | `/templates`, `/shared/templates/:token`     | Вибір, незалежна копія, обмежений share snapshot    |
-| Доступи й обліковий запис | `/settings/access`, `/settings/account`      | PAT/OAuth grants, revoke, Google linking            |
-| Backup                    | `/projects/:projectId/settings/backup`       | GitHub repo/branch, склад копії, status/retry       |
+| Екран                     | Цільовий маршрут                             | Основні дії                                                            |
+| ------------------------- | -------------------------------------------- | ---------------------------------------------------------------------- |
+| Вхід/реєстрація           | `/auth/login`, `/auth/register`              | Email/password, Google, verify/resend guidance                         |
+| Посилання з листів        | `/auth/verify-email`, `/auth/reset-password` | Явне підтвердження або новий пароль                                    |
+| Відновлення               | `/auth/forgot-password`                      | Generic відповідь, cooldown                                            |
+| Проєкти                   | `/projects`                                  | Пошук, створення, шаблон, імпорт, rename/delete                        |
+| Робочий простір           | `/projects/:projectId`                       | Файли, текст, PDF, контекст, структура, annotations                    |
+| Пропозиція                | `/projects/:projectId/proposals/:proposalId` | Diff, validation, candidate PDF, accept/reject                         |
+| Історія                   | `/projects/:projectId/history`               | Read-only версія, diff, restore як нова версія                         |
+| Шаблони                   | `/templates`, `/shared/templates/:token`     | Вибір, незалежна копія, обмежений share snapshot                       |
+| Доступи й обліковий запис | `/settings/access`, `/settings/account`      | PAT/OAuth grants, revoke; ім’я, пошта, зміна пароля, видалення акаунта |
+| Backup                    | `/projects/:projectId/settings/backup`       | GitHub repo/branch, склад копії, status/retry                          |
 
 OAuth consent route має визначити backend authorization flow; не вигадуємо робочий URL наперед. Експорт і upload progress можуть бути панелями, окрема сторінка для кожного job не потрібна.
 
-Реалізовано всі п’ять auth-сторінок, захищені `/settings/account` і `/projects` (поки заготовка без CRUD), відкриті `/preview/workspace`, `/preview/review` та 404. Без сеансу приватні маршрути ведуть на вхід; повернення дозволене лише до відомих внутрішніх сторінок. Інші маршрути таблиці — цільові. Preview routes містять лише статичні зразки.
+Реалізовано всі п’ять основних auth-сторінок та `/auth/delete-account` для явного підтвердження видалення, захищені `/settings/account` і `/projects` зі списком, створенням, перейменуванням та видаленням, відкриті `/preview/workspace`, `/preview/review` та 404. Без сеансу приватні маршрути ведуть на вхід; повернення дозволене лише до відомих внутрішніх сторінок. Інші маршрути таблиці — цільові. Preview routes містять лише статичні зразки, посилання на них показуються в навігації лише під час перегляду цих макетів. Рядки проєктів поки не відкривають редактор; маршрут робочого простору додається наступним блоком. Деталі поточної сторінки — у [11-projects.md](11-projects.md).
 
 ## 2. Робочий простір
 
@@ -45,6 +45,6 @@ Desktop: дерево, editor, PDF; користувач змінює ширин
 
 ## 4. Загальні стани
 
-Кожний data screen має loading, empty, error/retry, denied/not-found та ready. Empty проєктів після успішного GET відрізняється від помилки завантаження. Поки інтеграції немає, каркас показує окреме пояснення, а не нуль нібито реальних проєктів.
+Кожний data screen має loading, empty, error/retry, denied/not-found та ready. Empty проєктів після успішного GET відрізняється від помилки завантаження. Демонстраційні дані не використовуються як fallback при помилці API.
 
 Помилка містить зрозуміле пояснення та потрібну дію. Request/trace IDs, внутрішні коди й HTTP-статуси залишаються в API та діагностиці, не в користувацькому інтерфейсі. Toast підходить для допоміжного успіху; конфлікт, втрата доступу, compile error та незбережений текст потребують постійного видимого стану.

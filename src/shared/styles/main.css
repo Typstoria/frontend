@@ -1,5 +1,6 @@
 @import './tokens.css';
 @import './auth.css';
+@import './projects.css';
 
 * {
   box-sizing: border-box;
@@ -95,6 +96,35 @@ h2 {
   color: white;
   border-radius: 8px;
   font-family: Georgia, serif;
+}
+.account-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.header-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  color: var(--color-text);
+  background: transparent;
+}
+.header-icon-button:hover:not(:disabled) {
+  background: var(--color-background);
+}
+.header-icon-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.header-action-icon {
+  width: 22px;
+  height: 22px;
 }
 .main-nav {
   display: flex;

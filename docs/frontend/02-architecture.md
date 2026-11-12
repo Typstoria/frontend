@@ -24,7 +24,7 @@ CodeMirror/PDF.js ще не встановлені. Якщо spike виявит�
 src/
   app/                         # bootstrap, router, shell, загальні екрани помилок
   modules/
-    identity/                  # auth flow, memory session, API та response validation
+    identity/                  # auth flow, persistent session, API та response validation
     projects/                  # список і метадані проєктів
     workspace/                 # координація файлів, редактора й PDF
     review/                    # пропозиції та рішення
@@ -41,14 +41,14 @@ docs/frontend/
 
 ## 3. Власники стану
 
-| Дані                             | Де зберігати                            | Правило                                                              |
-| -------------------------------- | --------------------------------------- | -------------------------------------------------------------------- |
-| Проєкт, ревізії, jobs, proposals | Сервер; module store тримає loaded view | Ключ включає project/revision/candidate; не змішувати з draft        |
-| Незбережені тексти               | Workspace draft model                   | `baseRevisionId`, `fileId`, local documentVersion та save generation |
-| Відкриті панелі/вкладки          | Pinia UI store                          | Не оголошувати ці дані серверним станом                              |
-| Пошук/вибраний файл              | URL query, якщо потрібне посилання      | Жодного повного тексту або credentials                               |
-| Access token                     | Приватне memory-сховище auth-модуля     | Без persistence та devtools store зі значенням токена                |
-| Editor/PDF instances             | Нереактивні adapters при mounted view   | Dispose document, workers, listeners та object URLs при виході       |
+| Дані                             | Де зберігати                            | Правило                                                                |
+| -------------------------------- | --------------------------------------- | ---------------------------------------------------------------------- |
+| Проєкт, ревізії, jobs, proposals | Сервер; module store тримає loaded view | Ключ включає project/revision/candidate; не змішувати з draft          |
+| Незбережені тексти               | Workspace draft model                   | `baseRevisionId`, `fileId`, local documentVersion та save generation   |
+| Відкриті панелі/вкладки          | Pinia UI store                          | Не оголошувати ці дані серверним станом                                |
+| Пошук/вибраний файл              | URL query, якщо потрібне посилання      | Жодного повного тексту або credentials                                 |
+| Access token                     | Приватна змінна auth + localStorage     | Persistence за вимогою користувача; без reactive/devtools store токена |
+| Editor/PDF instances             | Нереактивні adapters при mounted view   | Dispose document, workers, listeners та object URLs при виході         |
 
 Auth уже використовує explicit load/invalidate/abort і generation для відсікання відповідей попереднього сеансу. Для нових модулів — той самий принцип. Request sequence захищає від пізньої відповіді іншого проєкту; abort сам по собі не гарантує цього. Shared query cache додається лише якщо ручне узгодження стану стане повторюваною проблемою.
 

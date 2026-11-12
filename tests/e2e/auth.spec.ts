@@ -5,6 +5,8 @@ const user = {
   id: 1,
   email: 'writer@example.com',
   emailVerified: true,
+  name: null,
+  hasPassword: true,
   createdAt: '2026-01-01T00:00:00Z',
 };
 const token = 'a'.repeat(43);
@@ -16,6 +18,10 @@ const loginResponse = () => ({
 });
 
 test.beforeEach(async ({ page }) => {
+  await page.route('**/api/auth/me', (route) => route.fulfill({ json: user }));
+  await page.route('**/api/projects?*', (route) =>
+    route.fulfill({ json: { items: [], nextCursor: null } }),
+  );
   await page.route('https://accounts.google.com/gsi/client*', (route) =>
     route.fulfill({
       contentType: 'application/javascript',
@@ -33,16 +39,16 @@ async function signIn(page: Page) {
   await expect(page.getByRole('heading', { name: 'Ваші проєкти' })).toBeVisible();
 }
 
-test('protects private routes, signs in without persistence, and requires login after reload', async ({
+test('protects private routes, persists a session, and restores it after reload', async ({
   page,
 }) => {
   await page.goto('/settings/account');
   await expect(page).toHaveURL(/\/auth\/login\?returnTo=/);
   await signIn(page);
-  expect(await page.evaluate(() => [localStorage.length, sessionStorage.length])).toEqual([0, 0]);
+  expect(await page.evaluate(() => [localStorage.length, sessionStorage.length])).toEqual([1, 0]);
   expect(await page.context().cookies()).toEqual([]);
   await page.reload();
-  await expect(page.getByRole('heading', { name: 'Увійти в Typstoria' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Ваші проєкти' })).toBeVisible();
 });
 
 test('handles login errors, email verification guidance and resend cooldown', async ({ page }) => {
@@ -144,24 +150,52 @@ test('requests password recovery with a generic response and cooldown', async ({
   ).toBeDisabled();
 });
 
-test('refreshes profile with Bearer and explicitly links Google', async ({ page }) => {
-  let linked = false;
+test('shows account settings without Google management', async ({ page }, testInfo) => {
   await page.route('**/api/auth/me', (route) => {
     expect(route.request().headers().authorization).toBe('Bearer 1.browser-test-secret');
     return route.fulfill({ json: user });
   });
-  await page.route('**/api/auth/google/link', (route) => {
-    linked = true;
-    expect(route.request().headers().authorization).toBe('Bearer 1.browser-test-secret');
-    expect(route.request().postDataJSON()).toEqual({ idToken: 'signed-google-test-token' });
-    return route.fulfill({ json: { message: 'Linked' } });
-  });
   await signIn(page);
-  await page.getByRole('link', { name: `Обліковий запис: ${user.email}` }).click();
+  await page.getByRole('link', { name: 'Обліковий запис', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Обліковий запис', exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Продовжити через Google' }).click();
-  await expect(page.getByRole('status')).toContainText('Google-акаунт прив’язано');
-  expect(linked).toBe(true);
+  await expect(page.getByText(user.email, { exact: true })).toBeVisible();
+  await expect(page.getByText('Підтверджено', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Google|Оновити/ })).toHaveCount(0);
+  await expect(page.locator('input')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Редагувати ім’я', exact: true })).toBeVisible();
+  for (const width of [320, 390, 768, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+  }
+  await page.setViewportSize(
+    testInfo.project.name === 'mobile' ? { width: 390, height: 844 } : { width: 1440, height: 900 },
+  );
+  await page.screenshot({ path: testInfo.outputPath('account.png'), fullPage: true });
+});
+
+test('retries a failed account load without displaying internal details', async ({ page }) => {
+  await page.route('**/api/auth/me', (route) =>
+    route.fulfill({
+      status: 503,
+      json: {
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: 'private internal failure',
+          requestId: 'private-request-123',
+        },
+      },
+    }),
+  );
+  await signIn(page);
+  await page.getByRole('link', { name: 'Обліковий запис', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('Не вдалося завантажити дані');
+  await expect(page.locator('body')).not.toContainText('private');
+  await page.route('**/api/auth/me', (route) => route.fulfill({ json: user }));
+  await page.getByRole('button', { name: 'Повторити', exact: true }).click();
+  await expect(page.getByText('Підтверджено', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Повторити', exact: true })).toHaveCount(0);
 });
 
 test('Google sign-in handles linking conflicts without auto-linking', async ({ page }) => {
@@ -188,14 +222,14 @@ test('Google sign-in handles linking conflicts without auto-linking', async ({ p
 test('handles private 401 and an incomplete logout without leaking the session', async ({
   page,
 }) => {
+  await signIn(page);
   await page.route('**/api/auth/me', (route) =>
     route.fulfill({
       status: 401,
       json: { error: { code: 'UNAUTHENTICATED', requestId: 'me-1', message: 'Expired' } },
     }),
   );
-  await signIn(page);
-  await page.getByRole('link', { name: `Обліковий запис: ${user.email}` }).click();
+  await page.getByRole('link', { name: 'Обліковий запис', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Увійти в Typstoria' })).toBeVisible();
   await signIn(page);
   await page.route('**/api/auth/logout', (route) => route.abort());
@@ -318,4 +352,62 @@ test('sends the localhost referrer required by Google Identity Services', async 
     'content',
     'no-referrer-when-downgrade',
   );
+});
+
+test('keeps the session through API errors and an offline connection', async ({ page }) => {
+  await page.route('**/api/auth/me', (route) => route.fulfill({ json: user }));
+  await signIn(page);
+  for (const status of [500, 502, 503, 429, 403]) {
+    await page.route('**/api/auth/me', (route) =>
+      route.fulfill({
+        status,
+        json: { error: { code: 'TEMPORARY_ERROR', message: 'private', requestId: 'private' } },
+      }),
+    );
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+    await page.getByRole('link', { name: 'Обліковий запис', exact: true }).click();
+    await expect(page.getByRole('alert')).toContainText('Не вдалося завантажити');
+    await expect(page).toHaveURL(/settings\/account$/);
+    await expect(page.getByRole('button', { name: 'Вийти', exact: true })).toBeVisible();
+    await page.getByRole('link', { name: 'Проєкти', exact: true }).click();
+  }
+  await page.route('**/api/auth/me', (route) => route.abort('internetdisconnected'));
+  await page.getByRole('link', { name: 'Обліковий запис', exact: true }).click();
+  await expect(page.getByRole('alert')).toBeVisible();
+  await expect(page).toHaveURL(/settings\/account$/);
+  await page.route('**/api/auth/me', (route) => route.fulfill({ json: user }));
+  await page.getByRole('button', { name: 'Повторити', exact: true }).click();
+  await expect(page.getByText('Підтверджено', { exact: true })).toBeVisible();
+});
+
+test('keeps a saved session during an outage after reload and synchronizes logout across tabs', async ({
+  page,
+}) => {
+  await signIn(page);
+  await page.route('**/api/auth/me', (route) =>
+    route.fulfill({
+      status: 503,
+      json: { error: { code: 'SERVICE_UNAVAILABLE', message: 'Unavailable' } },
+    }),
+  );
+  await page.reload();
+  await expect(page.getByRole('heading', { name: 'Ваші проєкти' })).toBeVisible();
+  expect(await page.evaluate(() => localStorage.getItem('typstoria.session'))).toContain(
+    '1.browser-test-secret',
+  );
+  const other = await page.context().newPage();
+  await other.route('**/api/auth/me', (route) =>
+    route.fulfill({ status: 503, json: { error: { code: 'SERVICE_UNAVAILABLE' } } }),
+  );
+  await other.route('**/api/projects?*', (route) =>
+    route.fulfill({ json: { items: [], nextCursor: null } }),
+  );
+  await other.goto('/projects');
+  await expect(other.getByRole('heading', { name: 'Ваші проєкти' })).toBeVisible();
+  await page.route('**/api/auth/logout', (route) => route.fulfill({ status: 204 }));
+  await page.getByRole('button', { name: 'Вийти', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Увійти в Typstoria' })).toBeVisible();
+  await expect(other.getByRole('heading', { name: 'Увійти в Typstoria' })).toBeVisible();
+  expect(await other.evaluate(() => localStorage.getItem('typstoria.session'))).toBeNull();
+  await other.close();
 });

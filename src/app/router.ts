@@ -31,6 +31,11 @@ export const router = createRouter({
       meta: { title: 'Макет ШІ-пропозиції' },
     },
     {
+      path: '/auth/delete-account',
+      component: () => import('../modules/identity/AccountDeletionPage.vue'),
+      meta: { title: 'Видалення акаунта', authLayout: true },
+    },
+    {
       path: '/auth/:flow(login|register|verify-email|forgot-password|reset-password)',
       component: () => import('../modules/identity/AuthPage.vue'),
       meta: { title: 'Обліковий запис', authLayout: true },

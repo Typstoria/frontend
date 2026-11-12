@@ -66,4 +66,19 @@ describe('API transport boundary', () => {
     expect(transport).not.toHaveBeenCalled();
     expect(() => createApiClient('https://example.com/api', transport)).toThrow();
   });
+
+  it('encodes query values separately from the credential-bearing path', async () => {
+    const transport = vi.fn<typeof fetch>().mockResolvedValue(Response.json({}));
+    await createApiClient('/api', transport)('/projects', {
+      query: { cursor: 21, label: 'a&redirect=https://example.com/#x' },
+      accessToken: 'secret',
+    });
+    const [url] = transport.mock.calls[0]!;
+    const parsed = new URL(String(url), 'http://localhost');
+    expect(parsed.pathname).toBe('/api/projects');
+    expect(parsed.searchParams.get('cursor')).toBe('21');
+    expect(parsed.searchParams.get('label')).toBe('a&redirect=https://example.com/#x');
+    expect(parsed.searchParams.size).toBe(2);
+    expect(parsed.hash).toBe('');
+  });
 });

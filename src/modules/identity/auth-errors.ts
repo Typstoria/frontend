@@ -1,12 +1,13 @@
 import { ApiError } from '../../shared/api/client';
 
 const messages: Record<string, string> = {
+  CURRENT_PASSWORD_INVALID: 'Поточний пароль неправильний.',
+  PASSWORD_NOT_SET: 'Для цього облікового запису пароль не встановлено.',
   INVALID_CREDENTIALS: 'Неправильна електронна пошта або пароль.',
   EMAIL_NOT_VERIFIED:
     'Підтвердьте електронну пошту перед входом. Ми можемо надіслати нове посилання.',
   INVALID_OR_EXPIRED_TOKEN: 'Посилання недійсне або вже використане. Запросіть нове.',
-  GOOGLE_ACCOUNT_LINK_REQUIRED:
-    'Ця пошта вже має акаунт. Увійдіть з паролем, а потім прив’яжіть Google у налаштуваннях.',
+  GOOGLE_ACCOUNT_LINK_REQUIRED: 'Ця пошта вже має акаунт. Увійдіть з паролем.',
   GOOGLE_ACCOUNT_LINK_CONFLICT:
     'Не вдалося прив’язати цей Google-акаунт. Оберіть акаунт із тією самою поштою.',
   GOOGLE_AUTH_NOT_CONFIGURED:

@@ -82,6 +82,58 @@ export interface paths {
     delete?: never;
     options?: never;
     head?: never;
+    /** Edit the current user's display name. Email and Google identity remain unchanged. */
+    patch: operations['IdentityController_updateProfile'];
+    trace?: never;
+  };
+  '/api/auth/change-password': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Change a password after checking the current one. All sessions are revoked. */
+    post: operations['IdentityController_changePassword'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/auth/request-account-deletion': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Send an account deletion link to the current verified email. No deletion occurs yet. */
+    post: operations['IdentityController_requestDeletion'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/auth/delete-account': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Permanently delete an account after an explicit confirmation with its single-use email token. */
+    post: operations['IdentityController_deleteAccount'];
+    delete?: never;
+    options?: never;
+    head?: never;
     patch?: never;
     trace?: never;
   };
@@ -204,6 +256,281 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/projects/{projectId}/changes': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Atomically save text, uploaded resources, paths, entrypoint and context as one accepted revision. */
+    post: operations['ProjectsController_save'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/projects': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List active projects owned by the current user, newest IDs first. */
+    get: operations['ProjectsController_list'];
+    put?: never;
+    /** Create a private project with an empty main.typ and accepted revision 1. */
+    post: operations['ProjectsController_create'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/projects/{projectId}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Read metadata of an owned project. */
+    get: operations['ProjectsController_get'];
+    put?: never;
+    post?: never;
+    /** Soft-delete an owned project and immediately block subsequent access. */
+    delete: operations['ProjectsController_delete'];
+    options?: never;
+    head?: never;
+    /** Rename an owned project. The last completed rename wins. */
+    patch: operations['ProjectsController_rename'];
+    trace?: never;
+  };
+  '/api/projects/{projectId}/state': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Read the current accepted revision, file tree, entrypoint and context. */
+    get: operations['ProjectsController_state'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/projects/{projectId}/files/{fileId}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Read a text file from an owned project's accepted revision. */
+    get: operations['ProjectsController_readFile'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/projects/{projectId}/uploads': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Stage one resource for 24 hours without changing the current document revision. */
+    post: operations['ProjectResourcesController_upload'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/projects/{projectId}/uploads/{uploadId}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Read the status of a project-bound staged or attached upload. */
+    get: operations['ProjectResourcesController_get'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/projects/{projectId}/files/{fileId}/download': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Download a file from the current or selected accepted revision as an attachment. */
+    get: operations['ProjectResourcesController_download'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/projects/{projectId}/revisions': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List accepted revisions, newest first, with their current Git projection status. */
+    get: operations['HistoryController_list'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/projects/{projectId}/revisions/{revisionId}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Read accepted revision metadata without depending on a running Git worker. */
+    get: operations['HistoryController_get'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/projects/{projectId}/revisions/{revisionId}/diff': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Compare two immutable snapshots by stable file ID; text patches are bounded. */
+    get: operations['HistoryController_diff'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/projects/{projectId}/restore': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Restore files, entrypoint and context as a new accepted revision with optimistic concurrency. */
+    post: operations['HistoryController_restore'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/projects/{projectId}/history/retry': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Retry failed Git projection attempts without changing the document or ready commits. */
+    post: operations['HistoryController_retry'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/projects/{projectId}/compilations': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Queue compilation of one immutable accepted revision; poll the returned job ID. */
+    post: operations['CompilationsController_create'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/projects/{projectId}/compilations/{jobId}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Read status, diagnostics and whether this revision is still current. */
+    get: operations['CompilationsController_get'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/projects/{projectId}/compilations/{jobId}/pdf': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Download the unexpired PDF of a successful job after checking project ownership. */
+    get: operations['CompilationsController_pdf'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -249,20 +576,38 @@ export interface components {
       error: components['schemas']['ErrorBodyDto'];
     };
     CredentialsDto: {
-      password: string;
-      /** Format: email */
+      /**
+       * Format: email
+       * @example user@example.com
+       */
       email: string;
+      /**
+       * Format: password
+       * @example DemoPassword123!
+       */
+      password: string;
     };
     MessageDto: {
       message: string;
     };
     LoginDto: {
-      password: string;
-      /** Format: email */
+      /**
+       * Format: email
+       * @example user@example.com
+       */
       email: string;
+      /**
+       * Format: password
+       * @example DemoPassword123!
+       */
+      password: string;
     };
     UserDto: {
-      /** Format: int32 */
+      name: string | null;
+      /**
+       * Format: int32
+       * @example 1
+       */
       id: number;
       /** Format: date-time */
       createdAt: string;
@@ -277,20 +622,583 @@ export interface components {
       tokenType: 'Bearer';
       user: components['schemas']['UserDto'];
     };
-    EmailDto: {
-      /** Format: email */
+    AccountDto: {
+      name: string | null;
+      /**
+       * Format: int32
+       * @example 1
+       */
+      id: number;
+      /** Format: date-time */
+      createdAt: string;
       email: string;
+      emailVerified: boolean;
+      /** @description Whether the account has a password. Does not expose provider identities. */
+      hasPassword: boolean;
+    };
+    UpdateProfileDto: {
+      /** @description Non-empty display name. Email and authentication providers are not editable. */
+      name: string;
+    };
+    ChangePasswordDto: {
+      /** Format: password */
+      currentPassword: string;
+      /** Format: password */
+      newPassword: string;
     };
     TokenDto: {
+      /**
+       * @description Example format only. Paste the actual single-use token from the confirmation or password-reset email.
+       * @example AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+       */
       token: string;
     };
+    EmailDto: {
+      /**
+       * Format: email
+       * @example user@example.com
+       */
+      email: string;
+    };
     ResetPasswordDto: {
+      /**
+       * @description Example format only. Paste the actual single-use token from the confirmation or password-reset email.
+       * @example AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+       */
       token: string;
+      /**
+       * Format: password
+       * @example DemoPassword123!
+       */
       password: string;
     };
     GoogleCredentialDto: {
-      /** @description The credential returned by the Google Identity Services JavaScript callback. */
+      /**
+       * @description Replace this placeholder with the real Google Identity Services credential.
+       * @example paste-google-id-token-from-browser
+       */
       idToken: string;
+    };
+    AttachFileDto: {
+      /**
+       * Format: int32
+       * @example 1
+       */
+      uploadId: number;
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      type: 'attachFile';
+      path: string;
+    };
+    ReplaceFileDto: {
+      /**
+       * Format: int32
+       * @example 1
+       */
+      fileId: number;
+      /**
+       * Format: int32
+       * @example 1
+       */
+      uploadId: number;
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      type: 'replaceFile';
+    };
+    CreateTextFileDto: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      type: 'createFile';
+      path: string;
+      content: string;
+    };
+    UpdateTextDto: {
+      /**
+       * Format: int32
+       * @example 1
+       */
+      fileId: number;
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      type: 'updateText';
+      content: string;
+    };
+    RenameFileDto: {
+      /**
+       * Format: int32
+       * @example 1
+       */
+      fileId: number;
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      type: 'renameFile';
+      path: string;
+    };
+    DeleteFileDto: {
+      /**
+       * Format: int32
+       * @example 1
+       */
+      fileId: number;
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      type: 'deleteFile';
+    };
+    SetEntrypointDto: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      type: 'setEntrypoint';
+      /** @description Path in the final tree, including a file created in this batch. */
+      path: string;
+    };
+    UpdateContextDto: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      type: 'updateContext';
+      content: string;
+    };
+    ProjectChangesDto: {
+      /**
+       * Format: int32
+       * @example 1
+       */
+      baseRevisionId: number;
+      /**
+       * @description Optional summary recorded with the accepted revision.
+       * @example Оновлено вступ документа
+       */
+      summary?: string;
+      operations: (
+        | components['schemas']['AttachFileDto']
+        | components['schemas']['ReplaceFileDto']
+        | components['schemas']['CreateTextFileDto']
+        | components['schemas']['UpdateTextDto']
+        | components['schemas']['RenameFileDto']
+        | components['schemas']['DeleteFileDto']
+        | components['schemas']['SetEntrypointDto']
+        | components['schemas']['UpdateContextDto']
+      )[];
+    };
+    CreatedProjectFileDto: {
+      /**
+       * Format: int32
+       * @example 1
+       */
+      fileId: number;
+      path: string;
+    };
+    ProjectChangesResultDto: {
+      /**
+       * Format: int32
+       * @example 1
+       */
+      projectId: number;
+      /**
+       * Format: int32
+       * @example 1
+       */
+      revisionId: number;
+      /**
+       * Format: int32
+       * @example 1
+       */
+      mainFileId: number;
+      createdFiles: components['schemas']['CreatedProjectFileDto'][];
+      revisionNumber: number;
+      manifestHash: string;
+      /**
+       * @description Git processing is asynchronous; query revision history for its current status.
+       * @enum {string}
+       */
+      historySyncStatus: 'ready' | 'pending' | 'failed';
+    };
+    CreateProjectDto: {
+      /**
+       * @description Project title; surrounding whitespace is removed.
+       * @example Дипломна робота
+       */
+      title: string;
+    };
+    ProjectCreatedDto: {
+      /**
+       * Format: int32
+       * @example 1
+       */
+      projectId: number;
+      /**
+       * Format: int32
+       * @example 1
+       */
+      revisionId: number;
+      /**
+       * Format: int32
+       * @example 1
+       */
+      mainFileId: number;
+      revisionNumber: number;
+      manifestHash: string;
+      /**
+       * @description Git processing is asynchronous; query revision history for its current status.
+       * @enum {string}
+       */
+      historySyncStatus: 'ready' | 'pending' | 'failed';
+    };
+    ProjectDto: {
+      /**
+       * Format: int32
+       * @example 1
+       */
+      id: number;
+      /**
+       * Format: int32
+       * @example 1
+       */
+      currentRevisionId: number;
+      /** Format: date-time */
+      createdAt: string;
+      /** Format: date-time */
+      updatedAt: string;
+      title: string;
+    };
+    ProjectListDto: {
+      /**
+       * Format: int32
+       * @description Pass as cursor to fetch the next page; null means there are no more results.
+       * @example 1
+       */
+      nextCursor: number | null;
+      items: components['schemas']['ProjectDto'][];
+    };
+    RenameProjectDto: {
+      /**
+       * @description Project title; surrounding whitespace is removed.
+       * @example Дипломна робота
+       */
+      title: string;
+    };
+    ProjectRevisionDto: {
+      /** @enum {string} */
+      historySyncStatus: 'pending' | 'ready' | 'failed';
+      commitSha: string | null;
+      /**
+       * Format: int32
+       * @example 1
+       */
+      id: number;
+      /**
+       * Format: int32
+       * @example 1
+       */
+      parentRevisionId: number | null;
+      /** Format: date-time */
+      createdAt: string;
+      number: number;
+      manifestHash: string;
+    };
+    ProjectFileDto: {
+      /**
+       * Format: int32
+       * @example 1
+       */
+      fileId: number;
+      path: string;
+      /** @enum {string} */
+      contentKind: 'binary' | 'text';
+      sha256: string;
+      sizeBytes: number;
+      mediaType: string;
+    };
+    ProjectStateDto: {
+      /**
+       * Format: int32
+       * @example 1
+       */
+      mainFileId: number;
+      project: components['schemas']['ProjectDto'];
+      revision: components['schemas']['ProjectRevisionDto'];
+      contextText: string;
+      tree: components['schemas']['ProjectFileDto'][];
+    };
+    ProjectTextFileDto: {
+      /**
+       * Format: int32
+       * @example 1
+       */
+      fileId: number;
+      /**
+       * Format: int32
+       * @example 1
+       */
+      revisionId: number;
+      /** @description UTF-8 source content. The initial main.typ is empty. */
+      content: string;
+      path: string;
+      /** @enum {string} */
+      contentKind: 'binary' | 'text';
+      sha256: string;
+      sizeBytes: number;
+      mediaType: string;
+    };
+    ProjectUploadDto: {
+      /**
+       * Format: int32
+       * @example 1
+       */
+      uploadId: number;
+      /** @example logo.png */
+      filename: string;
+      /** @example image/png */
+      mediaType: string;
+      /** @example 68 */
+      sizeBytes: number;
+      /** @example aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa */
+      sha256: string;
+      /** Format: date-time */
+      expiresAt: string;
+      /** @enum {string} */
+      status: 'available' | 'expired';
+    };
+    RevisionDetailsDto: {
+      /** @enum {string} */
+      historySyncStatus: 'pending' | 'ready' | 'failed';
+      commitSha: string | null;
+      /**
+       * Format: int32
+       * @example 1
+       */
+      id: number;
+      /**
+       * Format: int32
+       * @example 1
+       */
+      parentRevisionId: number | null;
+      /** Format: date-time */
+      createdAt: string;
+      /**
+       * Format: int32
+       * @example 1
+       */
+      projectId: number;
+      /**
+       * Format: int32
+       * @example 1
+       */
+      actorId: number;
+      /** @enum {string|null} */
+      historyErrorCode:
+        | 'STORAGE_UNAVAILABLE'
+        | 'GIT_UNAVAILABLE'
+        | 'GIT_DIVERGED'
+        | 'WORKER_LOST'
+        | 'MANIFEST_MISMATCH'
+        | null;
+      /** @enum {string} */
+      channel: 'web' | 'mcp';
+      operation: string;
+      summary: string;
+      isCurrent: boolean;
+      number: number;
+      manifestHash: string;
+    };
+    RevisionListDto: {
+      /**
+       * Format: int32
+       * @example 1
+       */
+      nextCursor: number | null;
+      items: components['schemas']['RevisionDetailsDto'][];
+    };
+    FileDiffDto: {
+      /**
+       * Format: int32
+       * @example 1
+       */
+      fileId: number;
+      /**
+       * @example [
+       *       "renamed",
+       *       "modified"
+       *     ]
+       */
+      changes: ('renamed' | 'modified' | 'added' | 'deleted')[];
+      before: components['schemas']['ProjectFileDto'] | null;
+      after: components['schemas']['ProjectFileDto'] | null;
+      patch: string | null;
+      /** @enum {string|null} */
+      patchOmittedReason: 'BINARY' | 'TEXT_TOO_LARGE' | 'PATCH_LIMIT' | 'COMPUTATION_LIMIT' | null;
+    };
+    ContextDiffDto: {
+      patch: string | null;
+      /** @enum {string|null} */
+      patchOmittedReason: 'TEXT_TOO_LARGE' | 'BINARY' | 'PATCH_LIMIT' | 'COMPUTATION_LIMIT' | null;
+      changed: boolean;
+    };
+    EntrypointDiffDto: {
+      /**
+       * Format: int32
+       * @example 1
+       */
+      beforeFileId: number;
+      /**
+       * Format: int32
+       * @example 1
+       */
+      afterFileId: number;
+      changed: boolean;
+    };
+    RevisionDiffDto: {
+      /**
+       * Format: int32
+       * @example 1
+       */
+      fromRevisionId: number;
+      /**
+       * Format: int32
+       * @example 1
+       */
+      toRevisionId: number;
+      /** @enum {string} */
+      fromHistorySyncStatus: 'pending' | 'ready' | 'failed';
+      /** @enum {string} */
+      toHistorySyncStatus: 'pending' | 'ready' | 'failed';
+      files: components['schemas']['FileDiffDto'][];
+      context: components['schemas']['ContextDiffDto'];
+      entrypoint: components['schemas']['EntrypointDiffDto'];
+    };
+    RestoreRevisionDto: {
+      /**
+       * Format: int32
+       * @example 1
+       */
+      targetRevisionId: number;
+      /**
+       * Format: int32
+       * @example 1
+       */
+      expectedCurrentRevisionId: number;
+      /** @example Відновлено попередній стан документа */
+      summary?: string;
+    };
+    RestoredRevisionDto: {
+      /**
+       * Format: int32
+       * @example 1
+       */
+      projectId: number;
+      /**
+       * Format: int32
+       * @example 1
+       */
+      revisionId: number;
+      /**
+       * Format: int32
+       * @example 1
+       */
+      mainFileId: number;
+      /**
+       * Format: int32
+       * @example 1
+       */
+      restoredFromRevisionId: number;
+      revisionNumber: number;
+      manifestHash: string;
+      /**
+       * @description Git processing is asynchronous; query revision history for its current status.
+       * @enum {string}
+       */
+      historySyncStatus: 'ready' | 'pending' | 'failed';
+    };
+    HistoryRetryDto: {
+      /**
+       * Format: int32
+       * @example 1
+       */
+      projectId: number;
+      resetCount: number;
+    };
+    CreateCompilationDto: {
+      /**
+       * Format: int32
+       * @example 1
+       */
+      revisionId: number;
+    };
+    CompileDiagnosticDto: {
+      /**
+       * Format: int32
+       * @example 1
+       */
+      fileId: number | null;
+      /** @example main.typ */
+      path: string | null;
+      /** @example unclosed delimiter */
+      message: string;
+      /** @description Exact UTF-16 ranges are not available in this CLI adapter yet. */
+      range: Record<string, never> | null;
+      /** @enum {string} */
+      severity: 'error' | 'warning';
+    };
+    CompilationDto: {
+      /**
+       * Format: int32
+       * @example 1
+       */
+      id: number;
+      /**
+       * Format: int32
+       * @example 1
+       */
+      projectId: number;
+      /**
+       * Format: int32
+       * @example 1
+       */
+      revisionId: number;
+      /** @enum {string} */
+      status: 'queued' | 'running' | 'succeeded' | 'failed' | 'timed_out' | 'cancelled';
+      /** @enum {string|null} */
+      errorCode:
+        | 'STORAGE_UNAVAILABLE'
+        | 'WORKER_LOST'
+        | 'TYPST_ERROR'
+        | 'DEPENDENCY_UNAVAILABLE'
+        | 'RUNNER_UNAVAILABLE'
+        | 'OUTPUT_LIMIT'
+        | 'RESOURCE_LIMIT'
+        | 'INTERNAL_ERROR'
+        | 'ACCESS_REVOKED'
+        | null;
+      /** @example aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa */
+      inputManifestHash: string;
+      /** @example bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb */
+      compilerFingerprint: string | null;
+      /** Format: date-time */
+      artifactExpiresAt: string | null;
+      /** Format: date-time */
+      createdAt: string;
+      /** Format: date-time */
+      startedAt: string | null;
+      /** Format: date-time */
+      finishedAt: string | null;
+      isCurrent: boolean;
+      artifactAvailable: boolean;
+      diagnostics: components['schemas']['CompileDiagnosticDto'][];
     };
   };
   responses: never;
@@ -464,7 +1372,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['UserDto'];
+          'application/json': components['schemas']['AccountDto'];
         };
       };
       400: {
@@ -476,6 +1384,210 @@ export interface operations {
         };
       };
       401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+    };
+  };
+  IdentityController_updateProfile: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['UpdateProfileDto'];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['AccountDto'];
+        };
+      };
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+    };
+  };
+  IdentityController_changePassword: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['ChangePasswordDto'];
+      };
+    };
+    responses: {
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+    };
+  };
+  IdentityController_requestDeletion: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['MessageDto'];
+        };
+      };
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+    };
+  };
+  IdentityController_deleteAccount: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['TokenDto'];
+      };
+    };
+    responses: {
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      400: {
         headers: {
           [name: string]: unknown;
         };
@@ -879,6 +1991,1287 @@ export interface operations {
         };
       };
       429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+    };
+  };
+  ProjectsController_save: {
+    parameters: {
+      query?: never;
+      header: {
+        'Idempotency-Key': string;
+      };
+      path: {
+        projectId: number;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['ProjectChangesDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ProjectChangesResultDto'];
+        };
+      };
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      /** @description REVISION_CONFLICT or IDEMPOTENCY_CONFLICT. Keep the local draft and reload state. */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      /** @description Invalid paths, file references or final entrypoint/tree. */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+    };
+  };
+  ProjectsController_list: {
+    parameters: {
+      query?: {
+        /** @description Last project ID from the previous page; projects are ordered by ID descending. */
+        cursor?: number;
+        /** @description Number of projects per page. */
+        limit?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ProjectListDto'];
+        };
+      };
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+    };
+  };
+  ProjectsController_create: {
+    parameters: {
+      query?: never;
+      header: {
+        /** @description Scoped to the current web session. Reuse with the same title returns the original result. */
+        'Idempotency-Key': string;
+      };
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['CreateProjectDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ProjectCreatedDto'];
+        };
+      };
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      /** @description The project from an earlier request has been deleted. */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      /** @description IDEMPOTENCY_CONFLICT: this key was used with another title. */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      /** @description STORAGE_UNAVAILABLE: no project was created. */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+    };
+  };
+  ProjectsController_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        projectId: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ProjectDto'];
+        };
+      };
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+    };
+  };
+  ProjectsController_delete: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        projectId: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Project marked as deleted. Physical cleanup is deferred. */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+    };
+  };
+  ProjectsController_rename: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        projectId: number;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['RenameProjectDto'];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ProjectDto'];
+        };
+      };
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+    };
+  };
+  ProjectsController_state: {
+    parameters: {
+      query?: {
+        /** @description Omit to read the current accepted revision. */
+        revisionId?: number;
+      };
+      header?: never;
+      path: {
+        projectId: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ProjectStateDto'];
+        };
+      };
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+    };
+  };
+  ProjectsController_readFile: {
+    parameters: {
+      query?: {
+        /** @description Omit to read the current accepted revision. */
+        revisionId?: number;
+      };
+      header?: never;
+      path: {
+        fileId: number;
+        projectId: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ProjectTextFileDto'];
+        };
+      };
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+    };
+  };
+  ProjectResourcesController_upload: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        projectId: number;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'multipart/form-data': {
+          /**
+           * Format: binary
+           * @description PNG/JPEG/GIF/WebP/PDF/TTF/OTF/WOFF/WOFF2; up to 10 MiB.
+           */
+          file: string;
+        };
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ProjectUploadDto'];
+        };
+      };
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+    };
+  };
+  ProjectResourcesController_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        uploadId: number;
+        projectId: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ProjectUploadDto'];
+        };
+      };
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+    };
+  };
+  ProjectResourcesController_download: {
+    parameters: {
+      query?: {
+        /** @description Omit to read the current accepted revision. */
+        revisionId?: number;
+      };
+      header?: never;
+      path: {
+        fileId: number;
+        projectId: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/octet-stream': string;
+        };
+      };
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+    };
+  };
+  HistoryController_list: {
+    parameters: {
+      query?: {
+        /** @description Revision number cursor, exclusive; ordered by number descending. */
+        cursor?: number;
+        /** @description Number of projects per page. */
+        limit?: number;
+      };
+      header?: never;
+      path: {
+        projectId: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RevisionListDto'];
+        };
+      };
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+    };
+  };
+  HistoryController_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        revisionId: number;
+        projectId: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RevisionDetailsDto'];
+        };
+      };
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+    };
+  };
+  HistoryController_diff: {
+    parameters: {
+      query: {
+        /** @description Compare this source revision against the revision in the route. */
+        against: number;
+      };
+      header?: never;
+      path: {
+        revisionId: number;
+        projectId: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RevisionDiffDto'];
+        };
+      };
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+    };
+  };
+  HistoryController_restore: {
+    parameters: {
+      query?: never;
+      header: {
+        'Idempotency-Key': string;
+      };
+      path: {
+        projectId: number;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['RestoreRevisionDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RestoredRevisionDto'];
+        };
+      };
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+    };
+  };
+  HistoryController_retry: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        projectId: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HistoryRetryDto'];
+        };
+      };
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+    };
+  };
+  CompilationsController_create: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        projectId: number;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['CreateCompilationDto'];
+      };
+    };
+    responses: {
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['CompilationDto'];
+        };
+      };
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+    };
+  };
+  CompilationsController_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        jobId: number;
+        projectId: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['CompilationDto'];
+        };
+      };
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+    };
+  };
+  CompilationsController_pdf: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        jobId: number;
+        projectId: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/pdf': string;
+        };
+      };
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      409: {
         headers: {
           [name: string]: unknown;
         };

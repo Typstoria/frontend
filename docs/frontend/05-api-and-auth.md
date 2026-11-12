@@ -1,23 +1,23 @@
 # Контракти API та авторизація
 
-Статус: 26.10.2026. Джерело фактів — актуальні контролери/DTO бекенду та його OpenAPI. Документація цільових API не є доказом їх реалізації.
+Статус контрактів: 12.11.2026. Джерело фактів — актуальні контролери/DTO бекенду та його OpenAPI. Документація цільових API не є доказом їх реалізації.
 
 ## 1. Реалізований бекенд
 
-Усі маршрути нижче мають prefix `/api`. Фронтенд використовує їх у реалізованому auth-модулі; деталі налаштування та обмеження перевірок — у [10-authentication.md](10-authentication.md).
+Усі маршрути нижче мають prefix `/api`. Фронтенд використовує їх у реалізованому auth-модулі, крім `/auth/google/link`: керування прив’язуванням прибрано за вимогою користувача; деталі налаштування та обмеження перевірок — у [10-authentication.md](10-authentication.md).
 
-| Метод/маршрут                    | Тіло                 | Результат                                        |
-| -------------------------------- | -------------------- | ------------------------------------------------ |
-| POST `/auth/register`            | `{email,password}`   | 202 generic message                              |
-| POST `/auth/login`               | `{email,password}`   | 200 `{accessToken,tokenType,expiresAt,user}`     |
-| GET `/auth/me`                   | Bearer               | `{id,email,emailVerified,createdAt}`             |
-| POST `/auth/logout`              | Bearer               | 204 без body                                     |
-| POST `/auth/resend-verification` | `{email}`            | 202 generic message                              |
-| POST `/auth/verify-email`        | `{token}`            | 200 message, без login                           |
-| POST `/auth/forgot-password`     | `{email}`            | 202 generic message                              |
-| POST `/auth/reset-password`      | `{token,password}`   | 200 message, без login                           |
-| POST `/auth/google`              | `{idToken}`          | 200 звичайний LoginResponse Typstoria            |
-| POST `/auth/google/link`         | `{idToken}` + Bearer | 200 message, явне linking після локального входу |
+| Метод/маршрут                    | Тіло                 | Результат                                             |
+| -------------------------------- | -------------------- | ----------------------------------------------------- |
+| POST `/auth/register`            | `{email,password}`   | 202 generic message                                   |
+| POST `/auth/login`               | `{email,password}`   | 200 `{accessToken,tokenType,expiresAt,user}`          |
+| GET `/auth/me`                   | Bearer               | `{id,name,email,emailVerified,createdAt,hasPassword}` |
+| POST `/auth/logout`              | Bearer               | 204 без body                                          |
+| POST `/auth/resend-verification` | `{email}`            | 202 generic message                                   |
+| POST `/auth/verify-email`        | `{token}`            | 200 message, без login                                |
+| POST `/auth/forgot-password`     | `{email}`            | 202 generic message                                   |
+| POST `/auth/reset-password`      | `{token,password}`   | 200 message, без login                                |
+| POST `/auth/google`              | `{idToken}`          | 200 звичайний LoginResponse Typstoria                 |
+| POST `/auth/google/link`         | `{idToken}` + Bearer | 200 message, явне linking після локального входу      |
 
 Сутності мають JSON number IDs, додатний int32 (1–2147483647). RequestId, hashes та секрети — рядки; токен Typstoria непрозорий, це не JWT. Дати — ISO 8601 UTC. У концептуальних backend-прикладах рядкові `revision-10` є підписами, не реальними ID.
 
@@ -25,21 +25,21 @@ Email trim/lowercase визначає backend. Register/reset: пароль 6–
 
 ## 2. Bearer lifecycle
 
-Один access token у приватному memory-сховищі auth-модуля, без refresh/cookies, browser storage та reactive store із самим секретом. Після reload потрібен новий login. Технічну поведінку описано в документації; UI повідомляє лише про фактичне завершення сеансу. Клієнтський expiry timer і приватний 401 завершують сеанс та прибирають профіль.
+Один access token у приватній змінній auth-модуля та localStorage `typstoria.session`, без refresh/cookies та reactive store із самим секретом. Зберігаються token, tokenType, expiresAt та мінімальний UserDto для відновлення оболонки при тимчасовому outage. Reload відновлює непрострочений сеанс і перевіряє GET me. Зміна акаунта або вихід синхронізуються між вкладками; приватні сторінки перемонтовуються за user ID. Технічну поведінку описано в документації; UI повідомляє лише про фактичне завершення сеансу. Клієнтський expiry timer і приватний 401 завершують сеанс та прибирають профіль.
 
-Приватний запит явно передає `Authorization: Bearer …`; public auth requests без нього. `expiresAt` дає клієнтське попередження, але server 401 остаточний. Reset/verify відкликають попередні tokens і не авторизують. Після logout очистити memory/cache; якщо server revoke не вдався, повідомити, що серверний токен міг залишитися чинним.
+Приватний запит явно передає `Authorization: Bearer …`; public auth requests без нього. `expiresAt` дає клієнтське попередження, але server 401 остаточний. Reset/verify відкликають попередні tokens і не авторизують. Після logout очистити memory/localStorage/cache; якщо server revoke не вдався, повідомити, що серверний токен міг залишитися чинним.
 
 Login до email verification: 403 `EMAIL_NOT_VERIFIED`, без токена. UI пропонує resend та перевірку пошти. Register/resend/forgot завжди generic, 202 не гарантує доставку. Cooldown — 5 хвилин; таймер UX не замінює server rate limits.
 
-Посилання: `/auth/verify-email#token=…` і `/auth/reset-password#token=…`. Перед створенням Router клієнт читає fragment у memory й очищує URL через history.replaceState. POST виконується лише після натискання підтвердження/submit форми; GET/mount не споживає token. Token не потрапляє у router persistence, telemetry, console чи returnTo та очищується після використання/виходу зі сторінки. Після reload потрібно відкрити лист повторно або запросити нове посилання.
+Посилання: `/auth/verify-email#token=…`, `/auth/reset-password#token=…` та `/auth/delete-account#token=…`. Перед створенням Router клієнт читає fragment у memory й очищує URL через history.replaceState. POST виконується лише після натискання підтвердження/submit форми; GET/mount не споживає token. Token не потрапляє у router persistence, telemetry, console чи returnTo та очищується після використання/виходу зі сторінки. Після reload потрібно відкрити лист повторно або запросити нове посилання.
 
-Google: офіційна GIS button, callback `credential` → JSON `{idToken}`. Це окремий credential, не Bearer Typstoria. `GOOGLE_ACCOUNT_LINK_REQUIRED` веде до звичайного login й окремого linking; автоматичного об’єднання немає. Google-only recovery — через Google. Client ID публічний; client secret у frontend не потрібний. `GOOGLE_AUTH_NOT_CONFIGURED` — провайдер недоступний, звичайний вхід залишається.
+Google: офіційна GIS button, callback `credential` → JSON `{idToken}`. Це окремий credential, не Bearer Typstoria. `GOOGLE_ACCOUNT_LINK_REQUIRED` пропонує звичайний вхід із паролем; автоматичного об’єднання немає. Керування прив’язуванням/відв’язуванням у профілі не потрібне за актуальною вимогою користувача. Google-only recovery — через Google. Client ID публічний; client secret у frontend не потрібний. `GOOGLE_AUTH_NOT_CONFIGURED` — провайдер недоступний, звичайний вхід залишається.
 
 ## 3. Transport каркаса
 
 `src/shared/api/client.ts`: JSON request, optional explicit Bearer/Idempotency-Key, AbortSignal + 15 s timeout, 204, нормалізований ApiError. Transport повертає `unknown`: module adapter повинен валідовувати response, а не робити безумовний `as DTO`. Abort/network error не видається за server envelope. Жодного retry або автоматичного redirect на login тут немає.
 
-Каркас підтримує лише same-origin `/api`, прості шляхи без query і JSON body. Pagination/query, FormData upload, streaming та PDF bytes потребують окремих transport methods при реалізації відповідних модулів. Вони повинні зберегти ті самі правила auth, origin і cleanup; поточний helper не використовувати для PDF.
+Transport підтримує same-origin `/api`, прості шляхи та JSON body. Query передається окремим структурованим `query` і кодується через URLSearchParams; рядок query або fragment у самому path заборонено. Pagination уже використовує цей механізм. FormData upload, streaming та PDF bytes потребують окремих transport methods при реалізації відповідних модулів. Вони повинні зберегти ті самі правила auth, origin і cleanup; поточний helper не використовувати для PDF.
 
 Приклад актуального error envelope:
 
@@ -53,15 +53,15 @@ Google: офіційна GIS button, callback `credential` → JSON `{idToken}`.
 }
 ```
 
-UI обирає зрозумілий текст за `code`; невідомий code має safe fallback. Details з validation може бути object; не рендерити як HTML. 401 — re-login; 403 — пояснення доступу/verification; 404 — ресурс недоступний; 409 — conflict UI; 413/415 — upload help; 429 — backoff; 503 — тимчасова недоступність. Retry-After використовувати лише якщо header фактично доступний: наразі CORS exposedHeaders містить тільки X-Request-Id.
+UI обирає зрозумілий текст за `code`; невідомий code має safe fallback. Details з validation може бути object; не рендерити як HTML. 401 — re-login; 403 — пояснення доступу/verification; 404 — ресурс недоступний; 409 — conflict UI; 413/415 — upload help; 429 — backoff; 503 — тимчасова недоступність. Retry-After використовувати лише якщо header фактично доступний: наразі CORS exposedHeaders містить X-Request-Id та Content-Disposition.
 
 ## 4. Майбутні контракти та узгодження
 
-Точні шляхи — у [backend API design](https://github.com/Typstoria/backend/blob/main/docs/backend/05-api-and-mcp.md). Projects/files/revisions/compile/proposals та решта доменних endpoints **ще не реалізовані**. Типи фактичного OpenAPI генеруються через openapi-typescript у `src/shared/api/schema.d.ts`; identity adapter додатково перевіряє відповіді в runtime. Після додавання endpoint оновити generated файл, не дописувати до нього майбутні DTO вручну.
+Точні шляхи — у [backend API design](https://github.com/Typstoria/backend/blob/main/docs/backend/05-api-and-mcp.md). У бекенді вже реалізовані projects CRUD/state, atomic changes, resource uploads/download, compilation jobs/PDF та revisions/diff/restore. Фронтенд підключає CRUD проєктів, докладно — [11-projects.md](11-projects.md). Решта цих API призначені для наступних frontend-інкрементів; proposals/MCP та інші майбутні інтеграції перевіряються окремо перед реалізацією. Типи фактичного OpenAPI генеруються через openapi-typescript у `src/shared/api/schema.d.ts`; identity/projects adapters додатково перевіряють відповіді в runtime. Після додавання endpoint оновити generated файл, не дописувати до нього майбутні DTO вручну.
 
 | До реалізації функції     | Мінімальний узгоджений контракт                                                                      |
 | ------------------------- | ---------------------------------------------------------------------------------------------------- |
-| Workspace                 | State snapshot, stable file IDs, atomic operations, baseRevisionId, metadataVersion, limits          |
+| Workspace                 | State snapshot, stable file IDs, atomic operations, baseRevisionId, limits; rename — last-write-wins |
 | Save/retry                | Idempotency-Key, payload conflict, recovery після втрати відповіді                                   |
 | Compile/PDF               | Job status, diagnostics UTF-16, isCurrent, artifactAvailable, inputs fingerprint, protected download |
 | Review                    | Exact candidate/version/hash, validationId, accept/reject/rebase, stale та acknowledgement           |

@@ -250,31 +250,88 @@
   width: 100%;
 }
 
-.account-link {
-  font-size: 12px;
-  max-width: 190px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.page.account-page {
+  max-width: 840px;
 }
-.account-page {
-  max-width: 800px;
+.account-page > h1 {
+  margin-bottom: 28px;
 }
-.account-card {
-  padding: 28px;
-  margin-top: 22px;
+.account-setting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 24px 28px;
 }
-.account-email {
-  font-size: 18px;
-  font-weight: 550;
+.account-setting + .account-setting {
+  border-top: 1px solid var(--color-border);
+}
+.account-setting-value {
+  min-width: 0;
+}
+.account-name {
+  margin: 10px 0 0;
   overflow-wrap: anywhere;
 }
-.account-card .status-badge {
-  display: inline-block;
-  margin-bottom: 18px;
+.account-setting .button {
+  flex-shrink: 0;
 }
-.account-card .google-control {
-  max-width: 340px;
+.account-setting .danger-text {
+  color: #a03036;
+}
+.account-dialog-description {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.account-delete-confirm {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 13px;
+  margin: 24px 0;
+}
+.account-delete-confirm input {
+  margin: 4px 0 0;
+  flex-shrink: 0;
+  accent-color: #a03036;
+}
+.account-delete-return {
+  display: block;
+  text-align: center;
+  margin-top: 20px;
+}
+.account-delete-confirm + .button-danger {
+  background: #a03036;
+}
+
+.account-setting h2 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0;
+}
+.account-email-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  margin-top: 10px;
+}
+.account-email {
+  font-size: 16px;
+  overflow-wrap: anywhere;
+  min-width: 0;
+  margin: 0;
+}
+.account-verified {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #286445;
+  font-size: 12px;
+}
+.account-verified svg {
+  width: 16px;
+  height: 16px;
 }
 @media (max-width: 900px) {
   .auth-stage {
@@ -310,11 +367,10 @@
     border-radius: 12px;
   }
 
-  .account-card {
-    padding: 22px;
-  }
-  .account-link {
-    max-width: 120px;
+  .account-setting {
+    padding: 22px 20px;
+    flex-wrap: wrap;
+    gap: 14px;
   }
 }
 @media (prefers-reduced-motion: reduce) {

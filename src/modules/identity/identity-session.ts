@@ -1,23 +1,43 @@
 import { readonly, shallowRef } from 'vue';
 import { ApiError, createApiClient } from '../../shared/api/client';
 import type { RequestOptions } from '../../shared/api/client';
-import { createIdentityApi, parseUser, parseMessage } from './identity-api';
+import {
+  createIdentityApi,
+  parseAccount,
+  parseMessage,
+  parseLoginResponse,
+  parseUser,
+} from './identity-api';
 import type { Credentials, LoginResponse, User } from './identity-api';
 
-type EndReason = 'expired' | 'revoked' | 'logout' | null;
+type EndReason = 'expired' | 'revoked' | 'logout' | 'password-changed' | null;
 
-export function createIdentitySession(request = createApiClient('/api')) {
+export const SESSION_STORAGE_KEY = 'typstoria.session';
+type SessionStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
+function browserStorage(): SessionStorage | null {
+  try {
+    return typeof window === 'undefined' ? null : window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+export function createIdentitySession(
+  request = createApiClient('/api'),
+  storage: SessionStorage | null = browserStorage(),
+  events: EventTarget | null = typeof window === 'undefined' ? null : window,
+) {
   const api = createIdentityApi(request);
   const user = shallowRef<User | null>(null);
   const endReason = shallowRef<EndReason>(null);
   const logoutFailed = shallowRef(false);
-  // Never expose the credential as reactive state or write it to browser storage.
+  // Keep the in-use credential private; persistence is isolated to this auth service.
   let accessToken: string | null = null;
   let expiresAt = 0;
   let generation = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
 
-  function clear(reason: EndReason) {
+  function clear(reason: EndReason, publish = true) {
     generation++;
     if (timer) clearTimeout(timer);
     accessToken = null;
@@ -25,6 +45,13 @@ export function createIdentitySession(request = createApiClient('/api')) {
     user.value = null;
     endReason.value = reason;
     logoutFailed.value = false;
+    if (publish) {
+      try {
+        storage?.removeItem(SESSION_STORAGE_KEY);
+      } catch {
+        /* Storage may be disabled. */
+      }
+    }
   }
 
   function isAuthenticated() {
@@ -42,7 +69,7 @@ export function createIdentitySession(request = createApiClient('/api')) {
     );
   }
 
-  function accept(result: LoginResponse, expectedGeneration: number) {
+  function accept(result: LoginResponse, expectedGeneration: number, publish = true) {
     if (generation !== expectedGeneration)
       throw new DOMException('Session superseded', 'AbortError');
     if (Date.parse(result.expiresAt) <= Date.now()) {
@@ -55,7 +82,64 @@ export function createIdentitySession(request = createApiClient('/api')) {
     endReason.value = null;
     logoutFailed.value = false;
     scheduleExpiry();
+    if (publish) persist();
   }
+
+  function persist() {
+    if (!accessToken || !user.value) return;
+    try {
+      storage?.setItem(
+        SESSION_STORAGE_KEY,
+        JSON.stringify({
+          accessToken,
+          tokenType: 'Bearer',
+          expiresAt: new Date(expiresAt).toISOString(),
+          user: parseUser(user.value),
+        }),
+      );
+    } catch {
+      /* Keep the valid in-memory session if browser storage is unavailable. */
+    }
+  }
+
+  function restore() {
+    let saved: string | null;
+    try {
+      saved = storage?.getItem(SESSION_STORAGE_KEY) ?? null;
+    } catch {
+      return;
+    }
+    if (!saved) {
+      if (accessToken) clear('logout', false);
+      return;
+    }
+    try {
+      const result = parseLoginResponse(JSON.parse(saved));
+      if (
+        !/^[A-Za-z0-9._~-]{1,512}$/.test(result.accessToken) ||
+        Date.parse(result.expiresAt) <= Date.now()
+      ) {
+        clear('expired');
+        return;
+      }
+      if (accessToken === result.accessToken && expiresAt === Date.parse(result.expiresAt)) {
+        if (JSON.stringify(parseUser(user.value)) !== JSON.stringify(result.user))
+          user.value = result.user;
+        return;
+      }
+      accept(result, ++generation, false);
+    } catch {
+      clear('revoked');
+    }
+  }
+  function storageChanged(event: Event) {
+    const change = event as StorageEvent;
+    if (change.key !== SESSION_STORAGE_KEY && change.key !== null) return;
+    // Read the newest value rather than applying an old queued cross-tab event.
+    restore();
+  }
+  restore();
+  events?.addEventListener('storage', storageChanged);
 
   async function signIn(load: () => Promise<LoginResponse>, signal?: AbortSignal) {
     const expected = ++generation;
@@ -91,20 +175,46 @@ export function createIdentitySession(request = createApiClient('/api')) {
     logoutFailed: readonly(logoutFailed),
     api,
     isAuthenticated,
+    request: authenticatedRequest,
     login: (credentials: Credentials, signal?: AbortSignal) =>
       signIn(() => api.login(credentials, signal), signal),
     google: (idToken: string, signal?: AbortSignal) =>
       signIn(() => api.google(idToken, signal), signal),
     async refreshProfile(signal?: AbortSignal) {
       const expected = generation;
-      const profile = parseUser(await authenticatedRequest('/auth/me', signal ? { signal } : {}));
-      if (expected === generation) user.value = profile;
+      const profile = parseAccount(
+        await authenticatedRequest('/auth/me', signal ? { signal } : {}),
+      );
+      if (expected === generation) {
+        user.value = profile;
+        persist();
+      }
+      return profile;
     },
-    async linkGoogle(idToken: string, signal?: AbortSignal) {
+    async updateProfile(name: string, signal?: AbortSignal) {
+      const profile = parseAccount(
+        await authenticatedRequest('/auth/me', {
+          method: 'PATCH',
+          body: { name },
+          ...(signal ? { signal } : {}),
+        }),
+      );
+      user.value = profile;
+      persist();
+      return profile;
+    },
+    async changePassword(currentPassword: string, newPassword: string, signal?: AbortSignal) {
+      await authenticatedRequest('/auth/change-password', {
+        method: 'POST',
+        body: { currentPassword, newPassword },
+        ...(signal ? { signal } : {}),
+      });
+      clear('password-changed');
+    },
+    async requestAccountDeletion(signal?: AbortSignal) {
       parseMessage(
-        await authenticatedRequest('/auth/google/link', {
+        await authenticatedRequest('/auth/request-account-deletion', {
           method: 'POST',
-          body: { idToken },
           ...(signal ? { signal } : {}),
         }),
       );
@@ -128,6 +238,10 @@ export function createIdentitySession(request = createApiClient('/api')) {
       }
     },
     invalidate: () => clear('revoked'),
+    dispose() {
+      if (timer) clearTimeout(timer);
+      events?.removeEventListener('storage', storageChanged);
+    },
   };
 }
 

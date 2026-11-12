@@ -20,7 +20,7 @@ Backend U01–U15 успадковано як предметні обмежен�
 | FE-A01 | Vite SPA, без Nuxt/SSR                  | Приватний workspace не потребує SEO; перевірити deep links на production host  |
 | FE-A02 | Pinia для shared state, fetch transport | Прості явні залежності; query cache за потребою, без другого джерела draft     |
 | FE-A03 | Same-origin `/api`, dev reverse proxy   | Один browser origin, простіший auth; CORS/Origin backend збережені             |
-| FE-A04 | Memory-only Bearer                      | Відповідає backend; reload потребує входу, persistence окремим рішенням        |
+| FE-A04 | Bearer + localStorage                   | Актуальна вимога користувача: відновлення після reload, cross-tab logout       |
 | FE-A05 | Explicit save спочатку                  | Зрозумілі ревізії, conflict/retry/dirty generation перевіряються до autosave   |
 | FE-A06 | CSS tokens, без UI-kit                  | Візуальна система ще обговорюється; каркас має тимчасове нейтральне оформлення |
 | FE-A07 | CodeMirror 6 і PDF.js — кандидати       | LSP/Typst/UTF-16/worker spike перед install; альтернативу задокументувати      |
@@ -51,4 +51,12 @@ Exact installed versions — у package.json/package-lock.json; сумісніс
 
 ## 5. Реалізація FE1
 
-Користувач надав M01–M04 і доручив наступний крок реалізації з перевіркою desktop/mobile. Auth реалізовано за M04 із збереженням backend policy; runtime credential лишається у приватній пам’яті. Типи фактичного OpenAPI генеруються вручну через dev-команду `api:types`; це не генератор API й не runtime залежність браузера.
+Користувач надав M01–M04 і доручив наступний крок реалізації з перевіркою desktop/mobile. Auth реалізовано за M04 із збереженням backend policy; runtime credential лишається у приватній змінній; подальша вимога користувача додає localStorage persistence. Типи фактичного OpenAPI генеруються вручну через dev-команду `api:types`; це не генератор API й не runtime залежність браузера.
+
+## 6. Реалізація FE2a
+
+Погоджено наступний невеликий блок: список проєктів, створення, перейменування та видалення через наявний backend API. Без редактора у цьому інкременті. Кольори й ієрархія M01 збережені; основний вигляд — компактні рядки з меню дій, без фіктивного пошуку/шаблонів або декоративних карток. Стан списку й ключ повтору створення живуть лише в mounted page; `identitySession.request` додає credential та відсікає відповіді попереднього сеансу.
+
+## 7. Спрощення облікового запису
+
+Актуальна вимога користувача скасовує початковий UI linking: у профілі немає прив’язування, відв’язування чи зміни Google. Google login зберігається. Подальше погоджене розширення профілю: редагування імені, зміна пароля та видалення через пошту, без постійного refresh або декоративного профілю.

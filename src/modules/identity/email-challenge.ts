@@ -17,7 +17,11 @@ export function safeReturnTo(value: unknown): string {
 let pending: { path: string; token: string | null } | null = null;
 
 export function captureInitialChallenge() {
-  if (['/auth/verify-email', '/auth/reset-password'].includes(window.location.pathname)) {
+  if (
+    ['/auth/verify-email', '/auth/reset-password', '/auth/delete-account'].includes(
+      window.location.pathname,
+    )
+  ) {
     pending = {
       path: window.location.pathname,
       token: takeEmailChallenge(window.location, window.history),

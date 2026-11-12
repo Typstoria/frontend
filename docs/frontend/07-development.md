@@ -1,19 +1,19 @@
 # Розвиток фронтенду
 
-Статус: FE0 та frontend-реалізація FE1. Цей файл описує наявний код; решта документів містить також цільову поведінку.
+Статус: FE0, frontend-реалізація FE1 та FE2a (керування проєктами). Цей файл описує наявний код; решта документів містить також цільову поведінку.
 
 ## 1. Що є зараз
 
 - Vue 3 + strict TypeScript, Vite, Vue Router, Pinia.
 - Адаптивна оболонка, skip link, 404, lazy pages і page titles.
-- `/projects` із поясненням відсутності інтеграції; кнопка створення вимкнена.
+- `/projects`: приватний список із cursor pagination, створення, перейменування й видалення з підтвердженням; native dialog, keyboard/focus, loading/empty/error states.
 - `/preview/workspace`: статичний Typst і HTML-зразок сторінки, показ/приховування файлів, source/preview switch для вузького екрана.
 - `/preview/review`: статичне порівняння, вимкнені accept/reject. Це не реалізований diff engine.
-- Auth за M04: register/login/logout, verify/resend, forgot/reset, Google та linking.
-- Захищений `/settings/account`, memory-only Bearer, expiry/401 handling і route guards.
+- Auth за M04: register/login/logout, verify/resend, forgot/reset, Google login без керування прив’язуванням.
+- Захищений `/settings/account`, Bearer із localStorage persistence, expiry/401 handling і route guards.
 - JSON fetch helper та unit tests transport boundary; browser smoke і CI.
 
-Авторизація використовує фактичний Identity API. `/projects` поки є захищеною заготовкою без CRUD; CodeMirror, PDF.js, LSP і SSE ще немає. Preview routes відкриті та містять лише статичні приклади.
+Авторизація використовує фактичний Identity API. `/projects` використовує фактичний Projects API; CodeMirror, PDF.js, LSP і SSE ще немає. Preview routes відкриті та містять лише статичні приклади.
 
 ## 2. Локальна робота
 
@@ -45,7 +45,7 @@ Build виходить у `dist/`. `vite preview` не є production host. Ве�
 
 1. Перевірити фактичний OpenAPI, уточнити failure/conflict states і позначити відповідний етап у 06.
 2. Додати module API adapter із runtime response validation; наявні DTO не копіювати вручну як друге джерело істини.
-3. Відокремити server view, local draft і UI state. Long-lived token тримати в auth service memory, не Pinia state.
+3. Відокремити server view, local draft і UI state. Токен тримати в приватній змінній auth service; лише цей service керує localStorage persistence. У Pinia token не потрапляє.
 4. Додати use case, component/page, route та cleanup. Не читати singleton router із shared transport.
 5. Перевірити meaningful негативні сценарії, `npm run check` та потрібний browser test.
 6. Оновити статус документації й прибрати placeholder для готової функції. Preview fixtures лишати явно демонстраційними, не fallback при API failure.
@@ -60,6 +60,6 @@ Tests не залежать від робочої БД чи mail secrets. CI з�
 
 ## 6. Межі автоматичних перевірок
 
-`npm run check` перевіряє форматування, lint, типи, unit tests і production build. `npm run test:e2e` перевіряє auth lifecycle, errors/cooldown, guards, Google callback/linking, очищення email fragment, keyboard та адаптивність у Chromium desktop/mobile. Для тестів запускається окремий сервер на порту 5174 із підмінами API/GIS; він не використовує відкритий dev server.
+`npm run check` перевіряє форматування, lint, типи, unit tests і production build. `npm run test:e2e` перевіряє auth lifecycle, errors/cooldown, guards, Google callback/collision, очищення email fragment, keyboard та адаптивність у Chromium desktop/mobile. Projects-сценарії охоплюють CRUD, pagination/retry, lost response/idempotency, server 404/401, блокування повторних submit, діалоги й довгі назви на ширинах 320–1440 px. Для тестів запускається окремий сервер на порту 5174 із підмінами API/GIS; він не використовує відкритий dev server.
 
 Автоматичні frontend-тести не звертаються до реальних Google/Mailjet. Доставку листів і справжній Google credential потрібно перевірити з налаштованим бекендом та провайдерами. PDF-компіляція та MCP ще не реалізовані у фронтенді.

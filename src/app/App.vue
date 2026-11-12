@@ -24,6 +24,7 @@ async function checkSession() {
   }
 }
 onMounted(() => {
+  void checkSession();
   window.addEventListener('focus', checkSession);
   window.addEventListener('pageshow', checkSession);
   document.addEventListener('visibilitychange', checkSession);
@@ -64,27 +65,64 @@ async function logout() {
       </RouterLink>
       <nav class="main-nav" aria-label="Головна навігація">
         <RouterLink to="/projects">Проєкти</RouterLink>
-        <RouterLink to="/preview/workspace">Редактор</RouterLink>
-        <RouterLink to="/preview/review">ШІ-пропозиції</RouterLink>
+        <template v-if="route.path.startsWith('/preview/')">
+          <RouterLink to="/preview/workspace">Редактор</RouterLink>
+          <RouterLink to="/preview/review">ШІ-пропозиції</RouterLink>
+        </template>
       </nav>
-      <template v-if="user">
+      <div v-if="user" class="account-actions">
         <RouterLink
-          class="account-link"
+          class="header-icon-button"
           to="/settings/account"
-          :aria-label="`Обліковий запис: ${user.email}`"
-          >{{ user.email }}</RouterLink
+          aria-label="Обліковий запис"
+          title="Обліковий запис"
         >
-        <button class="button button-secondary" :disabled="signingOut" @click="logout">
-          Вийти
+          <svg
+            class="header-action-icon"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.7"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <circle cx="12" cy="12" r="9" />
+            <circle cx="12" cy="9" r="3" />
+            <path d="M5.6 18.3a6.5 6.5 0 0 1 12.8 0" />
+          </svg>
+        </RouterLink>
+        <button
+          class="header-icon-button"
+          aria-label="Вийти"
+          title="Вийти"
+          :disabled="signingOut"
+          :aria-busy="signingOut"
+          @click="logout"
+        >
+          <svg
+            class="header-action-icon"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.7"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M9 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h4M14 7l5 5-5 5M9 12h10" />
+          </svg>
         </button>
-      </template>
+      </div>
       <RouterLink v-else class="button button-secondary" to="/auth/login">Увійти</RouterLink>
     </header>
     <div v-if="route.path.startsWith('/preview/')" class="prototype-notice">
       Демонстраційний макет · дані документа не зберігаються
     </div>
     <main id="main-content" tabindex="-1">
-      <RouterView :key="route.path" />
+      <RouterView
+        :key="route.meta.requiresAuth ? `${route.path}:${user?.id ?? 'anonymous'}` : route.path"
+      />
     </main>
   </div>
 </template>

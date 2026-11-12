@@ -193,7 +193,11 @@ onBeforeUnmount(() => {
             class="auth-callout"
             role="status"
           >
-            Сеанс завершено. Увійдіть, щоб продовжити.
+            {{
+              identitySession.endReason.value === 'password-changed'
+                ? 'Пароль змінено. Увійдіть з новим паролем.'
+                : 'Сеанс завершено. Увійдіть, щоб продовжити.'
+            }}
           </div>
           <div
             v-if="identitySession.logoutFailed.value"

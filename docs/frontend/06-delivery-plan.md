@@ -4,15 +4,16 @@
 
 ## 1. Етапи
 
-| Етап                   | Результат                                                                      | Залежність / критерій виходу                                             |
-| ---------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------ |
-| FE0 — основа           | Архітектура, основні екрани, дизайн-бриф, Vue shell, tooling/CI                | Збірка й smoke працюють; placeholders не видаються за інтеграцію         |
-| FE1 — auth             | Register/verify/login/reset/logout, Google/link, memory token, приватні guards | Наявний Identity API; повний цикл із поштою, expiry та reload            |
-| FE2 — projects/save    | CRUD, multi-file draft, context text, upload, atomic save/conflict             | Backend P2/OpenAPI; конкурентне збереження не втрачає текст              |
-| FE3 — PDF/history      | Compile jobs, protected PDF, diagnostics, history/diff/restore, SSE            | Backend P3; old job не замінює новий результат, restore створює версію   |
-| FE4 — review/access    | Proposal lifecycle, candidate PDF, accept/reject/stale, PAT та consent/revoke  | P4/P5 і Bearer consent contract; користувач підтверджує точний candidate |
-| FE5 — повний workspace | Матеріали/annotations, templates/shares, ZIP, LSP/outline, GitHub backup       | P6–P8 і editor/WS spike; усі функціональні групи з 01 покриті            |
-| FE6 — release          | Browser/accessibility/performance, deployment, integration matrix              | Backend P9 + наскрізні сценарії, документація фактичних обмежень         |
+| Етап                   | Результат                                                                           | Залежність / критерій виходу                                             |
+| ---------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| FE0 — основа           | Архітектура, основні екрани, дизайн-бриф, Vue shell, tooling/CI                     | Збірка й smoke працюють; placeholders не видаються за інтеграцію         |
+| FE1 — auth             | Register/verify/login/reset/logout, Google login, persistent token, приватні guards | Наявний Identity API; повний цикл із поштою, expiry та reload            |
+| FE2a — projects        | Реалізовано CRUD приватних проєктів, pagination та повтор створення                 | Backend P2 є; сценарії та перевірки — у [11](11-projects.md)             |
+| FE2b — files/save      | Multi-file draft, context text, upload, atomic save/conflict                        | Backend P2/OpenAPI; конкурентне збереження не втрачає текст              |
+| FE3 — PDF/history      | Compile jobs, protected PDF, diagnostics, history/diff/restore, SSE                 | Backend P3; old job не замінює новий результат, restore створює версію   |
+| FE4 — review/access    | Proposal lifecycle, candidate PDF, accept/reject/stale, PAT та consent/revoke       | P4/P5 і Bearer consent contract; користувач підтверджує точний candidate |
+| FE5 — повний workspace | Матеріали/annotations, templates/shares, ZIP, LSP/outline, GitHub backup            | P6–P8 і editor/WS spike; усі функціональні групи з 01 покриті            |
+| FE6 — release          | Browser/accessibility/performance, deployment, integration matrix                   | Backend P9 + наскрізні сценарії, документація фактичних обмежень         |
 
 Окремий дизайн-прохід із 4 мокапами до FE2; він не потребує реалізації всіх інтеграцій. CodeMirror/LSP/PDF та Bearer transport spikes виконуються до залежних етапів. Закриття FE0 не означає готовності FE1–FE6.
 
@@ -20,7 +21,7 @@
 
 | ID   | Сценарій                                                                                                                  | Вимоги                    |
 | ---- | ------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
-| FT01 | Register → verify явним POST → login → logout; reset/reused token; Google collision/link; 401 без refresh                 | F01, N04                  |
+| FT01 | Register → verify явним POST → login → logout; reset/reused token; Google collision; 401 без refresh                      | F01, N04                  |
 | FT02 | Create/template, multi-file save/reopen, concurrent вкладки, rename entrypoint, lost response/idempotency                 | F02, F04, F08, N01, N05   |
 | FT03 | Typst error зберігає draft; compile out of order, unsaved source, stale/expired PDF                                       | F05, N02, N03             |
 | FT04 | Усі proposal operations видимі; candidate changed/stale, validation failure, explicit compile-error accept, повтор accept | F10, N01, N02             |
@@ -41,4 +42,4 @@ Unit tests — state transitions, save generation/retry, response adapters і pr
 
 ## 4. Фінальна демонстрація
 
-Auth → проєкт із шаблону → ручні правки й PDF → зовнішній MCP proposal → diff/validation → accept/reject → history/restore. Далі матеріали й анотації, незалежна template copy/share/revoke, ZIP round trip, GitHub backup conflict та revoke зовнішнього доступу. Усі ці сценарії є частиною повної поставки; FE0 і frontend-частина FE1 реалізовані; наступний інкремент — FE2 після готовності backend P2. Auth перевірено з реальними API/БД; доставку листів і ручний Google login перевіряють окремо з провайдерами. Межі перевірок — у [10-authentication.md](10-authentication.md).
+Auth → проєкт із шаблону → ручні правки й PDF → зовнішній MCP proposal → diff/validation → accept/reject → history/restore. Далі матеріали й анотації, незалежна template copy/share/revoke, ZIP round trip, GitHub backup conflict та revoke зовнішнього доступу. Усі ці сценарії є частиною повної поставки; FE0 і frontend-частина FE1 реалізовані; FE2a реалізує керування проєктами. Наступний інкремент — FE2b: файли, редактор і атомарне збереження через вже наявний backend P2. Backend API компіляції та історії також уже доступні для наступних етапів. Auth перевірено з реальними API/БД; доставку листів і ручний Google login перевіряють окремо з провайдерами. Межі перевірок — у [10-authentication.md](10-authentication.md).

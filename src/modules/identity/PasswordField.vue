@@ -7,6 +7,8 @@ defineProps<{
   minLength: number;
   describedby?: string;
   invalid?: boolean;
+  disabled?: boolean;
+  autofocus?: boolean;
 }>();
 const model = defineModel<string>({ required: true });
 const visible = ref(false);
@@ -17,6 +19,8 @@ const visible = ref(false);
     <input
       :id="id"
       v-model="model"
+      :disabled="disabled"
+      :autofocus="autofocus"
       :type="visible ? 'text' : 'password'"
       :autocomplete="autocomplete"
       :minlength="minLength"
@@ -28,6 +32,7 @@ const visible = ref(false);
     <button
       type="button"
       class="password-toggle"
+      :disabled="disabled"
       :aria-label="visible ? 'Приховати пароль' : 'Показати пароль'"
       :aria-pressed="visible"
       @click="visible = !visible"
