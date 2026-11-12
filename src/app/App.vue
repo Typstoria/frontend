@@ -4,6 +4,11 @@ import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router';
 import { identitySession } from '../modules/identity/identity-session';
 import { disableGoogleAutoSelect } from '../modules/identity/google-identity';
 import BrandLogo from '../shared/ui/BrandLogo.vue';
+import { safeReturnTo } from '../modules/identity/email-challenge';
+import {
+  allowWorkspaceLogout,
+  clearOtherAccountDraft,
+} from '../modules/workspace/workspace-lifecycle';
 
 const route = useRoute();
 const router = useRouter();
@@ -36,13 +41,15 @@ onBeforeUnmount(() => {
   document.removeEventListener('visibilitychange', checkSession);
 });
 watch(user, (value) => {
+  if (value) clearOtherAccountDraft(value.id);
   if (!value && route.meta.requiresAuth)
     void router.replace({
       path: '/auth/login',
-      query: route.path === '/settings/account' ? { returnTo: route.path } : {},
+      query: safeReturnTo(route.path) !== '/projects' ? { returnTo: safeReturnTo(route.path) } : {},
     });
 });
 async function logout() {
+  if (!allowWorkspaceLogout()) return;
   signingOut.value = true;
   disableGoogleAutoSelect();
   try {
@@ -58,7 +65,10 @@ async function logout() {
 
 <template>
   <a class="skip-link" href="#main-content">Перейти до вмісту</a>
-  <div class="app-shell" :class="{ 'auth-shell': route.meta.authLayout }">
+  <div
+    class="app-shell"
+    :class="{ 'auth-shell': route.meta.authLayout, 'workspace-shell': route.meta.workspaceLayout }"
+  >
     <header v-if="!route.meta.authLayout" class="app-header">
       <RouterLink to="/projects" class="brand" aria-label="Typstoria — проєкти">
         <BrandLogo />
@@ -121,6 +131,7 @@ async function logout() {
     </div>
     <main id="main-content" tabindex="-1">
       <RouterView
+        v-if="!route.meta.requiresAuth || user"
         :key="route.meta.requiresAuth ? `${route.path}:${user?.id ?? 'anonymous'}` : route.path"
       />
     </main>

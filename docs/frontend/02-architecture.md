@@ -11,12 +11,12 @@
 | Маршрути         | Vue Router, history mode, lazy pages                    | Каркас; окремі chunks для основних екранів                                       |
 | Спільний UI-стан | Pinia                                                   | Каркас; зараз тільки стан панелей редактора                                      |
 | API              | Нативний fetch у спільному transport                    | Каркас; без automatic mutation retries, результат `unknown` до валідації модулем |
-| Редактор         | Кандидат CodeMirror 6 з окремим LSP adapter             | Далі; перевірити Typst grammar, UTF-16, IME, undo, LSP та продуктивність         |
+| Редактор         | CodeMirror 6; LSP adapter — далі                        | Текстовий редактор; Typst grammar/LSP і performance spike — далі                 |
 | PDF              | Кандидат PDF.js у worker                                | Далі; власні controls, protected fetch, текстовий шар                            |
 | UI               | CSS custom properties і невеликі спільні Vue-компоненти | Каркас має попередні tokens; остаточний вигляд після дизайн-брифу                |
 | Перевірки        | Vitest, Playwright, ESLint, vue-tsc, Prettier           | Каркас; перевірка типів окрема від Vite transpilation                            |
 
-CodeMirror/PDF.js ще не встановлені. Якщо spike виявить проблему Typst/LSP, альтернативу (зокрема Monaco) обрати ADR до реалізації редактора. Не додаємо UI-kit або другу state/cache library до появи конкретної потреби.
+CodeMirror встановлено для текстового редактора; PDF.js ще не встановлено. Якщо spike виявить проблему Typst/LSP, альтернативу (зокрема Monaco) обрати ADR до реалізації редактора. Не додаємо UI-kit або другу state/cache library до появи конкретної потреби.
 
 ## 2. Межі модулів
 

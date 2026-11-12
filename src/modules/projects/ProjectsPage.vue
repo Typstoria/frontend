@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
+import { RouterLink } from 'vue-router';
 import { ApiError } from '../../shared/api/client';
 import ModalDialog from '../../shared/ui/ModalDialog.vue';
 import { identitySession } from '../identity/identity-session';
@@ -219,15 +220,22 @@ onBeforeUnmount(() => {
       :aria-busy="!!loading"
     >
       <li v-for="project in projects" :key="project.id" class="project-row">
-        <div class="project-info">
-          <h2>{{ project.title }}</h2>
-          <p>
+        <RouterLink
+          class="project-info"
+          :to="`/projects/${project.id}`"
+          :aria-label="project.title"
+          :aria-describedby="`project-updated-${project.id}`"
+        >
+          <h2>
+            {{ project.title }}
+          </h2>
+          <p :id="`project-updated-${project.id}`">
             Оновлено
             <time :datetime="project.updatedAt">{{
               dateFormat.format(new Date(project.updatedAt))
             }}</time>
           </p>
-        </div>
+        </RouterLink>
         <div
           class="project-actions"
           @focusout="leaveActions"

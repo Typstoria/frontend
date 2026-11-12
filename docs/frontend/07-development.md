@@ -13,7 +13,7 @@
 - Захищений `/settings/account`, Bearer із localStorage persistence, expiry/401 handling і route guards.
 - JSON fetch helper та unit tests transport boundary; browser smoke і CI.
 
-Авторизація використовує фактичний Identity API. `/projects` використовує фактичний Projects API; CodeMirror, PDF.js, LSP і SSE ще немає. Preview routes відкриті та містять лише статичні приклади.
+Авторизація використовує фактичний Identity API. `/projects` використовує фактичний Projects API; CodeMirror і автозбереження тексту доступні у `/projects/:projectId` ([13](13-workspace-autosave.md)); PDF.js, LSP і SSE ще немає. Preview routes відкриті та містять лише статичні приклади.
 
 ## 2. Локальна робота
 

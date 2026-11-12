@@ -16,6 +16,11 @@ export const router = createRouter({
       meta: { title: 'Проєкти', requiresAuth: true },
     },
     {
+      path: '/projects/:projectId([1-9][0-9]{0,9})',
+      component: () => import('../modules/workspace/WorkspacePage.vue'),
+      meta: { title: 'Редактор', requiresAuth: true, workspaceLayout: true },
+    },
+    {
       path: '/settings/account',
       component: () => import('../modules/identity/AccountPage.vue'),
       meta: { title: 'Обліковий запис', requiresAuth: true },

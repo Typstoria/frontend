@@ -15,15 +15,15 @@ Backend U01–U15 успадковано як предметні обмежен�
 
 ## 2. Технічні рішення каркаса
 
-| ADR    | Рішення                                 | Причина та перевірка                                                           |
-| ------ | --------------------------------------- | ------------------------------------------------------------------------------ |
-| FE-A01 | Vite SPA, без Nuxt/SSR                  | Приватний workspace не потребує SEO; перевірити deep links на production host  |
-| FE-A02 | Pinia для shared state, fetch transport | Прості явні залежності; query cache за потребою, без другого джерела draft     |
-| FE-A03 | Same-origin `/api`, dev reverse proxy   | Один browser origin, простіший auth; CORS/Origin backend збережені             |
-| FE-A04 | Bearer + localStorage                   | Актуальна вимога користувача: відновлення після reload, cross-tab logout       |
-| FE-A05 | Explicit save спочатку                  | Зрозумілі ревізії, conflict/retry/dirty generation перевіряються до autosave   |
-| FE-A06 | CSS tokens, без UI-kit                  | Візуальна система ще обговорюється; каркас має тимчасове нейтральне оформлення |
-| FE-A07 | CodeMirror 6 і PDF.js — кандидати       | LSP/Typst/UTF-16/worker spike перед install; альтернативу задокументувати      |
+| ADR    | Рішення                                            | Причина та перевірка                                                           |
+| ------ | -------------------------------------------------- | ------------------------------------------------------------------------------ |
+| FE-A01 | Vite SPA, без Nuxt/SSR                             | Приватний workspace не потребує SEO; перевірити deep links на production host  |
+| FE-A02 | Pinia для shared state, fetch transport            | Прості явні залежності; query cache за потребою, без другого джерела draft     |
+| FE-A03 | Same-origin `/api`, dev reverse proxy              | Один browser origin, простіший auth; CORS/Origin backend збережені             |
+| FE-A04 | Bearer + localStorage                              | Актуальна вимога користувача: відновлення після reload, cross-tab logout       |
+| FE-A05 | Explicit save спочатку                             | Зрозумілі ревізії, conflict/retry/dirty generation перевіряються до autosave   |
+| FE-A06 | CSS tokens, без UI-kit                             | Візуальна система ще обговорюється; каркас має тимчасове нейтральне оформлення |
+| FE-A07 | CodeMirror 6 — текстовий editor; PDF.js — кандидат | Базовий CM6 adapter перевірено; Typst grammar/LSP та PDF worker spike — далі   |
 
 Exact installed versions — у package.json/package-lock.json; сумісність перевіряється build/tests, а не твердженням «latest». TypeScript 5.9.3 обрано в межах peer range поточного typescript-eslint; оновлення окремим перевіреним кроком.
 
@@ -44,7 +44,7 @@ Exact installed versions — у package.json/package-lock.json; сумісніс
 - [Vue Router lazy loading](https://router.vuejs.org/guide/advanced/lazy-loading.html): route components через dynamic import.
 - [Pinia](https://pinia.vuejs.org/core-concepts/): визначення й межі shared stores.
 - [Vite environment](https://vite.dev/guide/env-and-mode.html): VITE_* потрапляє у браузерний bundle.
-- [CodeMirror guide](https://codemirror.net/docs/guide/): джерело для майбутнього editor spike; інтеграцію ще не перевірено.
+- [CodeMirror guide](https://codemirror.net/docs/guide/): джерело для EditorState/history adapter; базову текстову інтеграцію перевірено, мовні функції — далі.
 - [PDF.js](https://mozilla.github.io/pdf.js/getting_started/): display/viewer layers та worker для PDF preview.
 
 Поточні версії пакетів і peer/engine requirements перевірено через npm registry під час створення lockfile. Ці джерела визначають можливості бібліотек, але не є доказом реалізації Typstoria integration.
@@ -60,3 +60,7 @@ Exact installed versions — у package.json/package-lock.json; сумісніс
 ## 7. Спрощення облікового запису
 
 Актуальна вимога користувача скасовує початковий UI linking: у профілі немає прив’язування, відв’язування чи зміни Google. Google login зберігається. Подальше погоджене розширення профілю: редагування імені, зміна пароля та видалення через пошту, без постійного refresh або декоративного профілю.
+
+## FE2b: автозбереження текстових файлів
+
+Користувач погодив перший вертикальний зріз редактора та замінив ручне збереження автозбереженням. Пауза — 1000 мс, один atomic запит усіх dirty текстових файлів; Ctrl/Cmd+S лише прискорює той самий запис. Невідомий результат блокує нові пакети до idempotent retry; конфлікт вимагає явного порівняння. CodeMirror 6 використовується без неперевіреної Typst grammar/LSP. SmartTeX досліджено як локальний орієнтир для debounce та per-file EditorState; його save/retry-контракти не перенесено. Деталі й межі recovery — у [13](13-workspace-autosave.md).

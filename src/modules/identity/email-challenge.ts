@@ -11,7 +11,12 @@ export function takeEmailChallenge(
 
 export function safeReturnTo(value: unknown): string {
   // Only known private destinations. Never forward credentials, fragments or external URLs.
-  return value === '/settings/account' ? value : '/projects';
+  if (value === '/settings/account') return value;
+  if (typeof value === 'string' && /^\/projects\/[1-9][0-9]{0,9}$/.test(value)) {
+    const id = Number(value.slice('/projects/'.length));
+    if (id <= 2147483647) return value;
+  }
+  return '/projects';
 }
 
 let pending: { path: string; token: string | null } | null = null;

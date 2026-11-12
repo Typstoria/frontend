@@ -139,6 +139,41 @@ test('creates, renames and deletes projects with validation and explicit confirm
   await expect(rows(page)).toHaveCount(1);
 });
 
+test('opens a project from its full row and keeps row actions separate', async ({ page }) => {
+  await page.route('**/api/projects?*', (route) =>
+    route.fulfill({ json: { items: [project(10, 'Курсова робота')], nextCursor: null } }),
+  );
+  await signIn(page);
+
+  const projectLink = page.getByRole('link', { name: /Курсова робота/ });
+  await projectLink.getByText('12 лист. 2026 р., 12:30').click();
+  await expect(page).toHaveURL(/\/projects\/10$/);
+  await page.goBack();
+  await expect(projectLink).toBeVisible();
+
+  const linkBounds = await projectLink.boundingBox();
+  expect(linkBounds).not.toBeNull();
+  await page.mouse.click(
+    linkBounds!.x + linkBounds!.width - 8,
+    linkBounds!.y + linkBounds!.height / 2,
+  );
+  await expect(page).toHaveURL(/\/projects\/10$/);
+  await page.goBack();
+
+  await page.getByRole('button', { name: 'Новий проєкт', exact: true }).focus();
+  await page.keyboard.press('Tab');
+  await expect(projectLink).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(page).toHaveURL(/\/projects\/10$/);
+  await page.goBack();
+
+  await page.getByRole('button', { name: 'Дії: Курсова робота', exact: true }).click();
+  await expect(page).toHaveURL(/\/projects$/);
+  await page.getByRole('button', { name: 'Перейменувати', exact: true }).click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await expect(page).toHaveURL(/\/projects$/);
+});
+
 test('keeps loaded pages after a pagination failure and retries the same cursor', async ({
   page,
 }) => {

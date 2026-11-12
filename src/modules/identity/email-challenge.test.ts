@@ -22,9 +22,14 @@ describe('email challenge and return destination', () => {
       '//example.com',
       '/projects#token=secret',
       '/settings/account?token=secret',
+      '/projects/2147483648',
+      '/projects/01',
+      '/projects/1?token=secret',
+      '/projects/1#token=secret',
       undefined,
     ])
       expect(safeReturnTo(value)).toBe('/projects');
     expect(safeReturnTo('/settings/account')).toBe('/settings/account');
+    expect(safeReturnTo('/projects/1')).toBe('/projects/1');
   });
 });
