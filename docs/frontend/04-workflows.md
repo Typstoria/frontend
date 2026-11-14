@@ -1,6 +1,6 @@
 # Основні робочі процеси
 
-Статус: цільова поведінка v0.1. Робочі CRUD-сценарії проєктів описано в [11-projects.md](11-projects.md). Перший інкремент редактора з автозбереженням описано в [13](13-workspace-autosave.md); PDF та review ще не підключені у фронтенді.
+Статус: цільова поведінка v0.1. Робочі CRUD-сценарії проєктів описано в [11-projects.md](11-projects.md). Перший інкремент редактора з автозбереженням описано в [13](13-workspace-autosave.md); Компіляцію, PDF та історію підключено у [FE3](15-workspace-output-history.md).
 
 ## 1. Відкриття і редагування
 
@@ -35,7 +35,7 @@ GET state фіксує `currentRevisionId`; дерево, вміст і конт
 | Є unsaved edits      | Додаткове попередження, навіть якщо сервер каже `isCurrent=true` |
 | Артефакт недоступний | `artifactAvailable=false`, дія повторної компіляції              |
 
-Context-only revision не обов’язково робить PDF stale: відповідність залежить від inputs/fingerprint, не лише revision number. Старий job, завершений пізніше нового, не замінює вибраний актуальний PDF. Candidate PDF ніколи не видається за accepted revision PDF.
+Поточний backend визначає `isCurrent` за ID ревізії. Зміна лише контексту також позначає PDF як попередній. Старий job, завершений пізніше нового, не замінює вибраний актуальний PDF. Candidate PDF ніколи не видається за accepted revision PDF.
 
 Diagnostic range — zero-based UTF-16; за `range=null` немає вигаданого переходу на рядок. Старі diagnostics видно як історичні; навігація в новий draft можлива лише після коректного mapping.
 

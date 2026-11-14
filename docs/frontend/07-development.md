@@ -13,7 +13,7 @@
 - Захищений `/settings/account`, Bearer із localStorage persistence, expiry/401 handling і route guards.
 - JSON fetch helper та unit tests transport boundary; browser smoke і CI.
 
-Авторизація використовує фактичний Identity API. `/projects` використовує фактичний Projects API; CodeMirror і автозбереження тексту доступні у `/projects/:projectId` ([13](13-workspace-autosave.md)); PDF.js, LSP і SSE ще немає. Preview routes відкриті та містять лише статичні приклади.
+Авторизація використовує фактичний Identity API. `/projects` використовує фактичний Projects API; CodeMirror і автозбереження тексту доступні у `/projects/:projectId` ([13](13-workspace-autosave.md)); PDF.js та історія доступні у [FE3](15-workspace-output-history.md). Preview routes відкриті та містять лише статичні приклади.
 
 ## 2. Локальна робота
 
@@ -62,4 +62,4 @@ Tests не залежать від робочої БД чи mail secrets. CI з�
 
 `npm run check` перевіряє форматування, lint, типи, unit tests і production build. `npm run test:e2e` перевіряє auth lifecycle, errors/cooldown, guards, Google callback/collision, очищення email fragment, keyboard та адаптивність у Chromium desktop/mobile. Projects-сценарії охоплюють CRUD, pagination/retry, lost response/idempotency, server 404/401, блокування повторних submit, діалоги й довгі назви на ширинах 320–1440 px. Для тестів запускається окремий сервер на порту 5174 із підмінами API/GIS; він не використовує відкритий dev server.
 
-Автоматичні frontend-тести не звертаються до реальних Google/Mailjet. Доставку листів і справжній Google credential потрібно перевірити з налаштованим бекендом та провайдерами. PDF-компіляція та MCP ще не реалізовані у фронтенді.
+Автоматичні frontend-тести не звертаються до реальних Google/Mailjet. Доставку листів і справжній Google credential потрібно перевірити з налаштованим бекендом та провайдерами. Compile worker використовує Docker sandbox за замовчуванням; окремий реальний desktop/mobile smoke описано у [15](15-workspace-output-history.md). Серверний SSE та MCP залишаються окремими інтеграціями.

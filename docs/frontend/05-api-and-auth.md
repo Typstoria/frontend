@@ -37,9 +37,9 @@ Google: офіційна GIS button, callback `credential` → JSON `{idToken}`.
 
 ## 3. Transport каркаса
 
-`src/shared/api/client.ts`: JSON request, optional explicit Bearer/Idempotency-Key, AbortSignal + 15 s timeout, 204, нормалізований ApiError. Transport повертає `unknown`: module adapter повинен валідовувати response, а не робити безумовний `as DTO`. Abort/network error не видається за server envelope. Жодного retry або автоматичного redirect на login тут немає.
+`src/shared/api/client.ts`: JSON request, optional explicit Bearer/Idempotency-Key, AbortSignal + timeout 15 с для JSON та 120 с для передачі файлів, 204, нормалізований ApiError. Transport повертає `unknown`: module adapter повинен валідовувати response, а не робити безумовний `as DTO`. Abort/network error не видається за server envelope. Жодного retry або автоматичного redirect на login тут немає.
 
-Transport підтримує same-origin `/api`, прості шляхи та JSON body. Query передається окремим структурованим `query` і кодується через URLSearchParams; рядок query або fragment у самому path заборонено. Pagination уже використовує цей механізм. FormData upload, streaming та PDF bytes потребують окремих transport methods при реалізації відповідних модулів. Вони повинні зберегти ті самі правила auth, origin і cleanup; поточний helper не використовувати для PDF.
+Transport підтримує same-origin `/api`, прості шляхи, JSON, FormData і Blob. Query передається окремим структурованим `query` і кодується через URLSearchParams; рядок query або fragment у самому path заборонено. Pagination уже використовує цей механізм. Для ресурсів multipart і Blob проходять через той самий захист сеансу. Потокові відповіді плануються окремо.
 
 Приклад актуального error envelope:
 
@@ -57,7 +57,7 @@ UI обирає зрозумілий текст за `code`; невідомий 
 
 ## 4. Майбутні контракти та узгодження
 
-Точні шляхи — у [backend API design](https://github.com/Typstoria/backend/blob/main/docs/backend/05-api-and-mcp.md). У бекенді вже реалізовані projects CRUD/state, atomic changes, resource uploads/download, compilation jobs/PDF та revisions/diff/restore. Фронтенд підключає CRUD проєктів ([11](11-projects.md)), state, читання текстових файлів за ревізією та atomic updateText/autosave ([13](13-workspace-autosave.md)). Решта цих API призначені для наступних frontend-інкрементів; proposals/MCP та інші майбутні інтеграції перевіряються окремо перед реалізацією. Типи фактичного OpenAPI генеруються через openapi-typescript у `src/shared/api/schema.d.ts`; identity/projects adapters додатково перевіряють відповіді в runtime. Після додавання endpoint оновити generated файл, не дописувати до нього майбутні DTO вручну.
+Точні шляхи — у [backend API design](https://github.com/Typstoria/backend/blob/main/docs/backend/05-api-and-mcp.md). У бекенді вже реалізовані projects CRUD/state, atomic changes, resource uploads/download, compilation jobs/PDF та revisions/diff/restore. Фронтенд підключає CRUD проєктів ([11](11-projects.md)), state, читання файлів за ревізією, атомарні зміни тексту, дерева й контексту та передачу ресурсів ([14](14-workspace-files.md)). Компіляцію, приватний PDF та історію підключено у FE3 ([15](15-workspace-output-history.md)). Proposals/MCP та інші інтеграції перевіряються перед реалізацією. Типи фактичного OpenAPI генеруються через openapi-typescript у `src/shared/api/schema.d.ts`; identity/projects adapters додатково перевіряють відповіді в runtime. Після додавання endpoint оновити generated файл, не дописувати до нього майбутні DTO вручну.
 
 | До реалізації функції     | Мінімальний узгоджений контракт                                                                      |
 | ------------------------- | ---------------------------------------------------------------------------------------------------- |

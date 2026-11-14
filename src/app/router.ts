@@ -16,7 +16,7 @@ export const router = createRouter({
       meta: { title: 'Проєкти', requiresAuth: true },
     },
     {
-      path: '/projects/:projectId([1-9][0-9]{0,9})',
+      path: '/projects/:projectId([1-9][0-9]{0,9})/:workspaceView(history)?',
       component: () => import('../modules/workspace/WorkspacePage.vue'),
       meta: { title: 'Редактор', requiresAuth: true, workspaceLayout: true },
     },
@@ -77,7 +77,8 @@ router.afterEach(async (to) => {
     'reset-password': 'Новий пароль',
     'forgot-password': 'Відновлення доступу',
   };
-  document.title = `${titles[String(to.params.flow)] ?? String(to.meta.title ?? 'Документи')} · Typstoria`;
+  const title = to.params.workspaceView === 'history' ? 'Історія версій' : to.meta.title;
+  document.title = `${titles[String(to.params.flow)] ?? String(title ?? 'Документи')} · Typstoria`;
   await nextTick();
   document.getElementById('main-content')?.focus({ preventScroll: true });
 });

@@ -228,6 +228,31 @@ test('saves one immutable batch while later edits and file switching wait for th
   ]);
 });
 
+test('indents selected lines without replacing text and lets keyboard focus leave the editor', async ({
+  page,
+}) => {
+  await installSession(page);
+  await installWorkspaceApi(page);
+  await openWorkspace(page);
+  const editor = await sourceEditor(page);
+  await editor.fill('Перший рядок 🙂\nДругий рядок');
+  await editor.press(process.platform === 'darwin' ? 'Meta+a' : 'Control+a');
+  await editor.press('Tab');
+  const lines = () => editor.locator('.cm-line').allTextContents();
+  await expect.poll(lines).toEqual(['  Перший рядок 🙂', '  Другий рядок']);
+  await expect(editor).toBeFocused();
+  await editor.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z');
+  await expect.poll(lines).toEqual(['Перший рядок 🙂', 'Другий рядок']);
+  await editor.press(process.platform === 'darwin' ? 'Meta+Shift+z' : 'Control+Shift+z');
+  await expect.poll(lines).toEqual(['  Перший рядок 🙂', '  Другий рядок']);
+  await editor.press('Shift+Tab');
+  await expect.poll(lines).toEqual(['Перший рядок 🙂', 'Другий рядок']);
+  await expect(editor).toBeFocused();
+  await editor.press('Escape');
+  await editor.press('Tab');
+  await expect(editor).not.toBeFocused();
+});
+
 test('pauses autosave during IME composition and schedules it after composition ends', async ({
   page,
 }) => {
@@ -263,8 +288,9 @@ test('keeps long documents inside the editor viewport on short and narrow screen
     await page.setViewportSize(viewport);
     const scroller = page.locator('.editor-source .cm-scroller');
     const box = await scroller.boundingBox();
-    expect(box!.y).toBeLessThanOrEqual(160);
-    expect(box!.height).toBeGreaterThan(viewport.height - 170);
+    const headerBudget = viewport.width <= 720 ? 205 : 160;
+    expect(box!.y).toBeLessThanOrEqual(headerBudget);
+    expect(box!.height).toBeGreaterThan(viewport.height - headerBudget - 10);
     expect(box!.y + box!.height).toBeLessThanOrEqual(viewport.height + 1);
     expect(
       await page.evaluate(() => ({

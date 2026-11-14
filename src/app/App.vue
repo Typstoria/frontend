@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router';
 import { identitySession } from '../modules/identity/identity-session';
 import { disableGoogleAutoSelect } from '../modules/identity/google-identity';
@@ -13,6 +13,12 @@ import {
 const route = useRoute();
 const router = useRouter();
 const { user } = identitySession;
+const pageKey = computed(() => {
+  const path = route.meta.workspaceLayout
+    ? `/projects/${String(route.params.projectId)}`
+    : route.path;
+  return route.meta.requiresAuth ? `${path}:${user.value?.id ?? 'anonymous'}` : path;
+});
 const signingOut = ref(false);
 let checkingSession = false;
 const controller = new AbortController();
@@ -130,10 +136,7 @@ async function logout() {
       Демонстраційний макет · дані документа не зберігаються
     </div>
     <main id="main-content" tabindex="-1">
-      <RouterView
-        v-if="!route.meta.requiresAuth || user"
-        :key="route.meta.requiresAuth ? `${route.path}:${user?.id ?? 'anonymous'}` : route.path"
-      />
+      <RouterView v-if="!route.meta.requiresAuth || user" :key="pageKey" />
     </main>
   </div>
 </template>

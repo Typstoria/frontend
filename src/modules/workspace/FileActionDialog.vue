@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue';
 import ModalDialog from '../../shared/ui/ModalDialog.vue';
 import { filePathError, normalizeFilePath } from './file-path';
 import type { Snapshot } from './workspace-api';
+import { matchesResourceType } from './resource-formats';
 
 type Action = { kind: 'create' | 'rename' | 'delete' | 'entrypoint'; fileId?: number };
 
@@ -81,6 +82,12 @@ const validationError = computed(() => {
       props.action.kind === 'rename' ? props.action.fileId : undefined,
     );
     if (error) return error;
+    if (
+      props.action.kind === 'rename' &&
+      currentFile.value?.contentKind === 'binary' &&
+      !matchesResourceType(path.value, currentFile.value.mediaType)
+    )
+      return 'Розширення шляху має відповідати формату ресурсу.';
     if (needsReplacement.value && !candidates.value.length)
       return 'Спершу створіть інший файл із розширенням .typ.';
     if (

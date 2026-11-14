@@ -84,9 +84,12 @@ async function initialize() {
         key: 'Tab',
         run: (editor) => {
           if (editor.state.readOnly) return false;
+          if (editor.state.selection.ranges.some((range) => !range.empty))
+            return commandsModule.indentMore(editor);
           editor.dispatch(editor.state.replaceSelection('  '));
           return true;
         },
+        shift: commandsModule.indentLess,
       },
       {
         key: 'Escape',

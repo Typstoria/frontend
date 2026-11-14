@@ -1,0 +1,232 @@
+<script setup lang="ts">
+import { computed, ref, watch } from 'vue';
+import ModalDialog from '../../shared/ui/ModalDialog.vue';
+import { filePathError, normalizeFilePath } from './file-path';
+import type { Snapshot } from './workspace-api';
+
+import { compatibleResourcePaths, maxResourceBytes, resourceAccept } from './resource-formats';
+
+const props = defineProps<{
+  open: boolean;
+  replacementPath?: string | undefined;
+  files: Snapshot['tree'];
+  busy: boolean;
+  uploading: boolean;
+  locked: boolean;
+  error: string;
+}>();
+const emit = defineEmits<{
+  submit: [{ file: File; path: string }];
+  retry: [];
+  dismiss: [];
+  closed: [];
+}>();
+
+const file = ref<File | null>(null);
+const path = ref('');
+const pathEdited = ref(false);
+const fieldError = ref('');
+const isReplacement = computed(() => props.replacementPath !== undefined);
+const pathError = computed(() =>
+  !isReplacement.value && (file.value || path.value) ? filePathError(path.value, props.files) : '',
+);
+const validationError = computed(() => {
+  if (fieldError.value) return fieldError.value;
+  if (!file.value) return 'Виберіть файл.';
+  if (!compatibleResourcePaths(file.value.name, file.value.name))
+    return 'Виберіть файл підтримуваного типу.';
+  if (!file.value.size) return 'Виберіть непорожній файл.';
+  if (file.value.size > maxResourceBytes) return 'Файл має бути не більшим за 10 МіБ.';
+  if (pathError.value) return pathError.value;
+  if (!compatibleResourcePaths(file.value.name, props.replacementPath ?? path.value))
+    return 'Розширення шляху має відповідати формату вибраного файла.';
+  return '';
+});
+
+watch(
+  () => [props.open, props.replacementPath] as const,
+  ([open]) => {
+    if (!open) return;
+    file.value = null;
+    path.value = '';
+    pathEdited.value = false;
+    fieldError.value = '';
+  },
+  { immediate: true },
+);
+
+function selectFile(event: Event) {
+  const input = event.target as HTMLInputElement;
+  file.value = input.files?.[0] ?? null;
+  fieldError.value = '';
+  if (file.value && !pathEdited.value && !isReplacement.value) path.value = file.value.name;
+}
+
+function editPath() {
+  pathEdited.value = true;
+  fieldError.value = '';
+}
+
+function submit() {
+  if (props.busy || props.locked || validationError.value || !file.value) return;
+  emit('submit', {
+    file: file.value,
+    path: isReplacement.value ? props.replacementPath! : normalizeFilePath(path.value),
+  });
+}
+
+function dismiss() {
+  if (!props.busy || props.uploading) emit('dismiss');
+}
+</script>
+
+<template>
+  <ModalDialog
+    :open="open"
+    :title="isReplacement ? 'Замінити ресурс' : 'Додати ресурс'"
+    :busy="busy && !uploading"
+    @dismiss="dismiss"
+    @closed="emit('closed')"
+  >
+    <form novalidate @submit.prevent="submit">
+      <div class="form-field">
+        <div class="resource-picker">
+          <label
+            for="resource-file"
+            class="button button-secondary"
+            :class="{ 'picker-disabled': busy || locked }"
+            >Вибрати файл</label
+          >
+          <input
+            id="resource-file"
+            type="file"
+            :accept="resourceAccept"
+            autofocus
+            :disabled="busy || locked"
+            :aria-invalid="!!file && !!validationError"
+            :aria-describedby="file && validationError ? 'resource-error' : 'resource-hint'"
+            @change="selectFile"
+          />
+          <span :title="file?.name">{{ file?.name ?? 'Файл не вибрано' }}</span>
+        </div>
+        <p id="resource-hint" class="field-hint">
+          PNG, JPEG, GIF, WebP, PDF, TTF, OTF, WOFF або WOFF2. До 10 МіБ.
+        </p>
+      </div>
+
+      <div v-if="isReplacement" class="form-field">
+        <span class="field-label">Шлях ресурсу</span>
+        <p class="resource-path">{{ replacementPath }}</p>
+        <p class="field-hint">Вибраний файл замінить вміст цього ресурсу.</p>
+      </div>
+      <div v-else class="form-field">
+        <label for="resource-path">Шлях у проєкті</label>
+        <input
+          id="resource-path"
+          v-model="path"
+          autocomplete="off"
+          :disabled="busy || locked"
+          :aria-invalid="!!pathError"
+          :aria-describedby="pathError ? 'resource-error' : undefined"
+          @input="editPath"
+        />
+      </div>
+
+      <p
+        v-if="validationError && (file || path)"
+        id="resource-error"
+        class="field-error"
+        role="alert"
+      >
+        {{ validationError }}
+      </p>
+      <p v-if="error" class="form-message form-error" role="alert">{{ error }}</p>
+      <div class="modal-actions">
+        <button
+          type="button"
+          class="button button-secondary"
+          :disabled="busy && !uploading"
+          @click="dismiss"
+        >
+          {{ locked ? 'Закрити' : 'Скасувати' }}
+        </button>
+        <button
+          v-if="locked"
+          type="button"
+          class="button button-primary"
+          :disabled="busy"
+          @click="emit('retry')"
+        >
+          Повторити
+        </button>
+        <button
+          v-else
+          type="submit"
+          class="button button-primary"
+          :disabled="busy || !!validationError"
+        >
+          {{
+            uploading
+              ? 'Завантажуємо…'
+              : busy
+                ? 'Зачекайте…'
+                : isReplacement
+                  ? 'Замінити'
+                  : 'Додати'
+          }}
+        </button>
+      </div>
+    </form>
+  </ModalDialog>
+</template>
+
+<style scoped>
+.field-label {
+  display: block;
+  margin-bottom: 9px;
+  font-size: 13px;
+  line-height: 1.4;
+  font-weight: 600;
+}
+
+.resource-path {
+  overflow-wrap: anywhere;
+  margin: 0;
+}
+
+.resource-picker {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.resource-picker input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  clip-path: inset(50%);
+}
+.resource-picker label {
+  flex-shrink: 0;
+  min-height: 44px;
+  margin: 0;
+  cursor: pointer;
+}
+.resource-picker:focus-within label {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+.resource-picker span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+.picker-disabled {
+  opacity: 0.5;
+  cursor: default !important;
+}
+</style>

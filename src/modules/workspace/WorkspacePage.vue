@@ -1,26 +1,374 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { onBeforeRouteLeave, useRoute } from 'vue-router';
+import {
+  computed,
+  defineAsyncComponent,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  watch,
+} from 'vue';
+import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute } from 'vue-router';
 import { identitySession } from '../identity/identity-session';
-import { createWorkspaceApi } from './workspace-api';
-import { createWorkspaceModel } from './workspace-model';
+import { createResourceApi, createWorkspaceApi } from './workspace-api';
+import { createWorkspaceModel, workspaceError } from './workspace-model';
 import {
   registerWorkspaceExit,
   retainWorkspace,
+  retainWorkspaceRestore,
   takeWorkspaceRecovery,
+  takeWorkspaceRestore,
+  type RestoreAttempt,
 } from './workspace-lifecycle';
 import TextEditor from './TextEditor.vue';
 import WorkspaceFiles from './WorkspaceFiles.vue';
 import ModalDialog from '../../shared/ui/ModalDialog.vue';
 import FileActionDialog from './FileActionDialog.vue';
-import type { StructureChange } from './workspace-api';
+import ResourceDialog from './ResourceDialog.vue';
+import type { ProjectUpload, StructureChange } from './workspace-api';
+import { ApiError } from '../../shared/api/client';
+import { matchesResourceType } from './resource-formats';
+import { createCompilationApi, type Diagnostic } from './compilation-api';
+import { createCompilationModel } from './compilation-model';
+import { createHistoryApi } from './history-api';
+import WorkspaceOutput from './WorkspaceOutput.vue';
 import './workspace.css';
 
+const WorkspaceHistory = defineAsyncComponent(() => import('./WorkspaceHistory.vue'));
 const route = useRoute();
 const projectId = Number(route.params.projectId);
 const ownerId = identitySession.user.value!.id;
 const model = createWorkspaceModel(projectId, createWorkspaceApi(identitySession.request));
 const { state, atRisk } = model;
+const workspacePath = `/projects/${projectId}`;
+const historyOpen = computed(() => route.params.workspaceView === 'history');
+const historyApi = createHistoryApi(identitySession.request);
+const restoreController = new AbortController();
+const recoveredRestore = takeWorkspaceRestore(ownerId, projectId);
+const restoreAttempt = ref<RestoreAttempt | null>(null);
+const restoring = ref(false);
+const refreshBusy = ref(false);
+const restoreError = ref(
+  recoveredRestore && !recoveredRestore.result
+    ? 'Під час відновлення сеанс завершився. Перевірте результат в історії версій.'
+    : '',
+);
+const restoreNotice = ref(
+  recoveredRestore?.result ? `Створено версію ${recoveredRestore.result.revisionNumber}.` : '',
+);
+const canRestore = computed(
+  () =>
+    !!state.snapshot &&
+    !atRisk.value &&
+    state.status === 'clean' &&
+    !restoreAttempt.value &&
+    !refreshBusy.value,
+);
+const compilation = createCompilationModel(
+  createCompilationApi(projectId, identitySession.request),
+);
+const compileStatus = computed(() => {
+  const output = compilation.state;
+  if (output.busy) return output.job?.status === 'queued' ? 'У черзі…' : 'Компіляція…';
+  if (output.error) {
+    if (output.retry === 'status') return 'Статус невідомий';
+    if (output.job?.status === 'succeeded') return 'PDF недоступний';
+    if (output.job?.status === 'cancelled') return 'Скасовано';
+    return 'Компіляція не вдалася';
+  }
+  if (output.artifact) return 'PDF готовий';
+  return '';
+});
+const outputVisible = ref(false);
+const outputActive = ref(false);
+const savingForCompile = ref(false);
+const compileChoice = ref<{ id: number; number: number } | null>(null);
+const compileError = ref('');
+const restoreLocked = computed(() => restoring.value || !!restoreAttempt.value);
+const resourceApi = createResourceApi(identitySession.request);
+const resourceController = new AbortController();
+const contextOpen = ref(false);
+const contextInput = ref<HTMLTextAreaElement | null>(null);
+const resourceAction = ref<{ path?: string; fileId?: number } | null>(null);
+const resourceBusy = ref(false);
+const resourceUploading = ref(false);
+const resourceError = ref('');
+const resourceAttempted = ref(false);
+const downloading = ref(false);
+const downloadError = ref('');
+let stagedResource: { file: File; upload: ProjectUpload } | null = null;
+let deferredResource = false;
+let resourceFocus: HTMLElement | null = null;
+let uploadController: AbortController | undefined;
+
+async function refreshHistoryHead() {
+  if (refreshBusy.value || !canRestore.value) return;
+  refreshBusy.value = true;
+  restoreError.value = '';
+  try {
+    await model.refreshHead();
+  } catch (error) {
+    if (!restoreController.signal.aborted)
+      restoreError.value = workspaceError(error, 'Не вдалося оновити поточну версію.');
+  } finally {
+    refreshBusy.value = false;
+  }
+}
+
+function restoreVersion(target: { id: number; number: number; expectedHeadId: number }) {
+  if (!canRestore.value || state.snapshot?.revision.id !== target.expectedHeadId) return;
+  restoreAttempt.value = {
+    key: crypto.randomUUID(),
+    body: {
+      targetRevisionId: target.id,
+      expectedCurrentRevisionId: target.expectedHeadId,
+      summary: `Відновлено версію ${target.number}`,
+    },
+  };
+  void retryRestore();
+}
+
+async function retryRestore() {
+  const attempt = restoreAttempt.value;
+  if (!attempt || restoring.value || !state.snapshot || atRisk.value) return;
+  restoring.value = true;
+  restoreError.value = '';
+  restoreNotice.value = '';
+  try {
+    attempt.result ??= await historyApi.restore(
+      projectId,
+      attempt.body,
+      attempt.key,
+      restoreController.signal,
+    );
+    const head = await model.refreshHead();
+    if (!head || head.revision.number < attempt.result.revisionNumber)
+      throw new Error('Restore head is unavailable');
+    restoreNotice.value = `Створено версію ${attempt.result.revisionNumber}.`;
+    restoreAttempt.value = null;
+  } catch (error) {
+    if (restoreController.signal.aborted) return;
+    if (!attempt.result && error instanceof ApiError && error.code === 'REVISION_CONFLICT') {
+      restoreAttempt.value = null;
+      await refreshHistoryHead();
+      restoreError.value ||=
+        'З’явилася новіша версія. Перегляньте зміни й підтвердьте відновлення ще раз.';
+    } else if (
+      !attempt.result &&
+      error instanceof ApiError &&
+      [400, 403, 404, 422].includes(error.status)
+    ) {
+      restoreAttempt.value = null;
+      restoreError.value = workspaceError(error, 'Не вдалося відновити цю версію.');
+    } else {
+      restoreError.value = attempt.result
+        ? 'Версію відновлено. Потрібно оновити файли проєкту.'
+        : 'Не вдалося підтвердити відновлення. Повторіть спробу.';
+    }
+  } finally {
+    restoring.value = false;
+  }
+}
+
+watch(historyOpen, (open) => {
+  if (open) {
+    compileChoice.value = null;
+    mobileFilesVisible.value = false;
+    fileMenuOpen.value = false;
+    if (resourceAction.value && !resourceBusy.value && !state.pending) dismissResource();
+    if (fileAction.value && !submittingFileAction.value && !state.pending) dismissFileAction();
+    void refreshHistoryHead();
+  } else if (!restoreLocked.value) restoreError.value = '';
+});
+
+function requestCompile() {
+  const revision = state.snapshot?.revision;
+  if (!revision || compilation.state.busy || savingForCompile.value) return;
+  compileError.value = '';
+  if (atRisk.value || state.status !== 'clean')
+    compileChoice.value = { id: revision.id, number: revision.number };
+  else startCompilation(revision);
+}
+
+function startCompilation(revision: { id: number; number: number }) {
+  if (compilation.state.busy || restoreLocked.value) return;
+  outputVisible.value = true;
+  outputActive.value = true;
+  compileChoice.value = null;
+  compileError.value = '';
+  void compilation.start({ id: revision.id, number: revision.number });
+}
+
+function compileSavedVersion() {
+  if (compileChoice.value && !savingForCompile.value) startCompilation(compileChoice.value);
+}
+
+async function saveAndCompile() {
+  if (
+    !compileChoice.value ||
+    savingForCompile.value ||
+    compilation.state.busy ||
+    restoreLocked.value
+  )
+    return;
+  compileChoice.value = null;
+  savingForCompile.value = true;
+  try {
+    if (state.pending) {
+      await model.save();
+      if (restoreController.signal.aborted) return;
+      if (state.pending || state.saveError) {
+        compileError.value = 'Спочатку збережіть зміни, а тоді повторіть компіляцію.';
+        return;
+      }
+    }
+    const before = state.snapshot?.revision.id;
+    await model.save();
+    if (restoreController.signal.aborted) return;
+    if (
+      state.snapshot &&
+      !state.pending &&
+      !state.saveError &&
+      (state.status === 'clean' ||
+        (state.status === 'dirty' && state.snapshot.revision.id !== before))
+    )
+      startCompilation(state.snapshot.revision);
+    else compileError.value = 'Спочатку збережіть зміни, а тоді повторіть компіляцію.';
+  } finally {
+    savingForCompile.value = false;
+  }
+}
+
+async function toggleContext() {
+  contextOpen.value = !contextOpen.value;
+  if (contextOpen.value) {
+    await nextTick();
+    if (!isMobile.value) contextInput.value?.focus();
+  }
+}
+function openResource(replace: boolean) {
+  if (actionsDisabled.value || state.status === 'saving') return;
+  if (replace && selectedMeta.value?.contentKind !== 'binary') return;
+  resourceAttempted.value = false;
+  model.pauseAutosave(true);
+  fileMenuOpen.value = false;
+  stagedResource = null;
+  resourceError.value = '';
+  resourceFocus = replace
+    ? fileMenuTrigger.value
+    : isMobile.value
+      ? document.querySelector<HTMLElement>('.editor-files-toggle')
+      : (document.activeElement as HTMLElement | null);
+  if (!replace && isMobile.value && mobileFilesVisible.value) {
+    deferredResource = true;
+    mobileFilesVisible.value = false;
+    return;
+  }
+  if (!replace) resourceAction.value = {};
+  else if (selectedMeta.value?.contentKind === 'binary')
+    resourceAction.value = { path: selectedMeta.value.path, fileId: selectedMeta.value.fileId };
+}
+async function submitResource(input: { file: File; path: string }) {
+  const action = resourceAction.value;
+  if (
+    !action ||
+    resourceBusy.value ||
+    state.pending ||
+    ['saving', 'conflict'].includes(state.status)
+  )
+    return;
+  resourceBusy.value = true;
+  resourceError.value = '';
+  try {
+    if (
+      stagedResource?.file !== input.file ||
+      Date.parse(stagedResource.upload.expiresAt) <= Date.now()
+    ) {
+      uploadController = new AbortController();
+      resourceUploading.value = true;
+      const signal = AbortSignal.any([resourceController.signal, uploadController.signal]);
+      const upload = await resourceApi.upload(projectId, input.file, signal);
+      signal.throwIfAborted();
+      resourceUploading.value = false;
+      stagedResource = { file: input.file, upload };
+    }
+    const upload = stagedResource.upload;
+    if (!matchesResourceType(input.path, upload.mediaType)) {
+      resourceError.value = 'Розширення шляху має відповідати формату вибраного файла.';
+      return;
+    }
+    const operation: StructureChange =
+      action.fileId === undefined
+        ? { type: 'attachFile', path: input.path, uploadId: upload.uploadId }
+        : { type: 'replaceFile', fileId: action.fileId, uploadId: upload.uploadId };
+    resourceAttempted.value = true;
+    if (await model.mutate([operation])) {
+      contextOpen.value = false;
+      resourceAction.value = null;
+    } else if (state.status === 'conflict') resourceAction.value = null;
+    else if (!state.structure.length && !state.pending) stagedResource = null;
+  } catch (error) {
+    if (!resourceController.signal.aborted && !uploadController?.signal.aborted)
+      resourceError.value =
+        error instanceof ApiError && error.status === 415
+          ? 'Формат або вміст файла не підтримується.'
+          : error instanceof ApiError && error.status === 413
+            ? 'Файл має бути не більшим за 10 МіБ.'
+            : workspaceError(error, 'Не вдалося завантажити ресурс. Спробуйте ще раз.');
+  } finally {
+    uploadController = undefined;
+    resourceUploading.value = false;
+    resourceBusy.value = false;
+  }
+}
+async function retryResource() {
+  if (resourceBusy.value) return;
+  resourceBusy.value = true;
+  try {
+    await model.save();
+    if (state.status === 'conflict') resourceAction.value = null;
+    else if (!state.pending && !state.structure.length && state.status !== 'failed') {
+      contextOpen.value = false;
+      resourceAction.value = null;
+    } else if (!state.pending && !state.structure.length) stagedResource = null;
+  } finally {
+    resourceBusy.value = false;
+  }
+}
+function dismissResource() {
+  if (resourceBusy.value && !resourceUploading.value) return;
+  uploadController?.abort();
+  if (state.structure.some((op) => op.type === 'attachFile' || op.type === 'replaceFile'))
+    model.cancelStructure();
+  resourceAction.value = null;
+}
+function resourceClosed() {
+  model.pauseAutosave(false);
+  stagedResource = null;
+  if (resourceFocus?.isConnected) resourceFocus.focus();
+  resourceFocus = null;
+}
+async function downloadResource() {
+  const file = selectedMeta.value;
+  if (downloading.value || !state.snapshot || file?.contentKind !== 'binary') return;
+  downloading.value = true;
+  downloadError.value = '';
+  try {
+    const blob = await resourceApi.download(
+      projectId,
+      file,
+      state.snapshot.revision.id,
+      resourceController.signal,
+    );
+    resourceController.signal.throwIfAborted();
+    downloadBlob(blob, file.path.split('/').at(-1)!);
+  } catch (error) {
+    if (!resourceController.signal.aborted && state.selectedId === file.fileId)
+      downloadError.value = workspaceError(error, 'Не вдалося скачати ресурс. Спробуйте ще раз.');
+  } finally {
+    downloading.value = false;
+  }
+}
 type FileAction = { kind: 'create' | 'rename' | 'delete' | 'entrypoint'; fileId?: number };
 const fileAction = ref<FileAction | null>(null);
 const submittingFileAction = ref(false);
@@ -33,9 +381,11 @@ const fileMenuTrigger = ref<HTMLButtonElement | null>(null);
 const actionsDisabled = computed(
   () =>
     state.loading ||
+    restoreLocked.value ||
     state.fileLoading ||
     state.conflictLoading ||
     state.status === 'conflict' ||
+    state.structure.length > 0 ||
     (!!state.pending && state.status !== 'saving'),
 );
 function closeFileMenu(event: Event) {
@@ -72,6 +422,10 @@ function openFileAction(kind: FileAction['kind']) {
   } else fileAction.value = action;
 }
 function fileDrawerClosed() {
+  if (deferredResource) {
+    deferredResource = false;
+    resourceAction.value = {};
+  }
   if (deferredFileAction) {
     fileAction.value = deferredFileAction;
     deferredFileAction = null;
@@ -126,6 +480,41 @@ async function retryFileAction() {
 }
 const mobileQuery = window.matchMedia('(max-width: 720px)');
 const isMobile = ref(mobileQuery.matches);
+const splitQuery = window.matchMedia('(min-width: 1024px)');
+const canSplit = ref(splitQuery.matches);
+const onlyOutput = computed(() => !canSplit.value && outputVisible.value && outputActive.value);
+const showOutput = computed(() => outputVisible.value && (canSplit.value || outputActive.value));
+function splitChanged(event: MediaQueryListEvent) {
+  canSplit.value = event.matches;
+}
+function toggleOutput() {
+  if (canSplit.value) outputVisible.value = !outputVisible.value;
+  else {
+    outputActive.value = !onlyOutput.value;
+    outputVisible.value = true;
+  }
+}
+function canOpenDiagnostic(item: Diagnostic) {
+  return (
+    !!item.path &&
+    compilation.state.job?.revisionId === state.snapshot?.revision.id &&
+    !!state.snapshot?.tree.some(
+      (file) =>
+        file.fileId === item.fileId && file.path === item.path && file.contentKind === 'text',
+    )
+  );
+}
+async function openDiagnostic(item: Diagnostic) {
+  if (item.fileId === null || !canOpenDiagnostic(item)) return;
+  await selectFile(item.fileId);
+  await nextTick();
+  editor.value?.focus();
+}
+function downloadPdf() {
+  const artifact = compilation.state.artifact;
+  if (artifact && Date.parse(artifact.job.artifactExpiresAt!) > Date.now())
+    downloadBlob(artifact.pdf, `document-v${artifact.revision.number}.pdf`);
+}
 const desktopFilesVisible = ref(true);
 const mobileFilesVisible = ref(false);
 const collapsedPaths = ref<string[]>([]);
@@ -152,6 +541,9 @@ function viewportChanged(event: MediaQueryListEvent) {
   mobileFilesVisible.value = false;
 }
 async function selectFile(fileId: number) {
+  outputActive.value = false;
+  contextOpen.value = false;
+  downloadError.value = '';
   fileMenuOpen.value = false;
   await model.select(fileId);
   if (isMobile.value) mobileFilesVisible.value = false;
@@ -174,22 +566,35 @@ const labels = {
   refresh_failed: 'Не вдалося оновити файли',
 };
 let leaving = false;
+const workspaceAtRisk = computed(
+  () => atRisk.value || resourceUploading.value || restoreLocked.value,
+);
 function allowLeave() {
-  if (!atRisk.value || leaving) return true;
+  if (!workspaceAtRisk.value || leaving) return true;
   const confirmed = window.confirm(
-    'Є незбережені зміни або непідтверджене збереження. Якщо вийти, локальні правки буде втрачено. Залишити сторінку?',
+    restoreLocked.value
+      ? 'Результат відновлення ще не підтверджено. Залишити проєкт?'
+      : 'Є незбережені зміни або непідтверджене збереження. Якщо вийти, локальні правки буде втрачено. Залишити сторінку?',
   );
   if (confirmed) leaving = true;
   return confirmed;
 }
 const unregister = registerWorkspaceExit(allowLeave);
-watch(atRisk, (value) => {
-  if (value) window.addEventListener('beforeunload', beforeUnload);
-  else window.removeEventListener('beforeunload', beforeUnload);
-});
+watch(
+  workspaceAtRisk,
+  (value) => {
+    if (value) window.addEventListener('beforeunload', beforeUnload);
+    else window.removeEventListener('beforeunload', beforeUnload);
+  },
+  { immediate: true },
+);
 onBeforeRouteLeave(() => !identitySession.user.value || allowLeave());
+onBeforeRouteUpdate(
+  (to, from) =>
+    to.params.projectId === from.params.projectId || !identitySession.user.value || allowLeave(),
+);
 function beforeUnload(event: BeforeUnloadEvent) {
-  if (!atRisk.value) return;
+  if (!workspaceAtRisk.value) return;
   event.preventDefault();
   event.returnValue = '';
 }
@@ -205,6 +610,8 @@ function downloadCopy() {
           title: state.snapshot?.project.title,
           files,
           comparisons: state.conflict?.files,
+          context:
+            state.conflict?.files.find((file) => file.fileId === null)?.merged ?? state.contextText,
           fileChanges: state.structure,
         },
         null,
@@ -213,22 +620,35 @@ function downloadCopy() {
     ],
     { type: 'application/json;charset=utf-8' },
   );
+  downloadBlob(blob, `project-${projectId}-draft.json`);
+}
+function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = `project-${projectId}-draft.json`;
+  link.download = filename;
   link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 onMounted(() => {
   mobileQuery.addEventListener('change', viewportChanged);
+  splitQuery.addEventListener('change', splitChanged);
   document.addEventListener('pointerdown', closeFileMenu);
-  void model.load(takeWorkspaceRecovery(ownerId, projectId));
+  void model.load(takeWorkspaceRecovery(ownerId, projectId)).then(() => {
+    if (restoreController.signal.aborted) return;
+    if (historyOpen.value) void refreshHistoryHead();
+  });
 });
 onBeforeUnmount(() => {
+  resourceController.abort();
+  restoreController.abort();
+  compilation.dispose();
   mobileQuery.removeEventListener('change', viewportChanged);
+  splitQuery.removeEventListener('change', splitChanged);
   document.removeEventListener('pointerdown', closeFileMenu);
   if (!leaving && !identitySession.user.value) retainWorkspace(ownerId, projectId, model.recover());
+  if (!leaving && restoreAttempt.value)
+    retainWorkspaceRestore(ownerId, projectId, restoreAttempt.value);
   model.dispose();
   unregister();
   window.removeEventListener('beforeunload', beforeUnload);
@@ -243,9 +663,12 @@ onBeforeUnmount(() => {
       <button class="button button-secondary" @click="model.load()">Повторити</button>
     </div>
     <template v-else-if="state.snapshot">
-      <div class="editor-heading">
+      <div
+        class="editor-heading"
+        :class="{ 'editor-heading-commands': !historyOpen && !state.conflict }"
+      >
         <button
-          v-if="!state.conflict"
+          v-if="!state.conflict && !historyOpen && !onlyOutput"
           class="editor-files-toggle"
           :aria-expanded="filesVisible"
           :aria-controls="isMobile ? undefined : 'workspace-files'"
@@ -265,13 +688,97 @@ onBeforeUnmount(() => {
           </svg>
         </button>
         <h1 :title="state.snapshot.project.title">{{ state.snapshot.project.title }}</h1>
-        <span
-          role="status"
-          class="editor-save-status"
-          :class="{ 'save-idle': state.status === 'clean' }"
-          >{{ labels[state.status] }}</span
-        >
+        <div class="editor-heading-tools">
+          <span
+            role="status"
+            class="editor-save-status"
+            :class="{ 'save-idle': state.status === 'clean' }"
+            >{{ labels[state.status] }}</span
+          >
+          <button
+            v-if="!state.conflict && !historyOpen && !onlyOutput"
+            class="button button-quiet workspace-context-toggle"
+            :aria-pressed="contextOpen"
+            aria-controls="workspace-context"
+            @click="toggleContext"
+          >
+            Контекст
+          </button>
+          <RouterLink
+            v-if="historyOpen"
+            :to="workspacePath"
+            class="button button-quiet workspace-context-toggle"
+            >Редактор</RouterLink
+          >
+          <RouterLink
+            v-else-if="!state.conflict"
+            :to="`${workspacePath}/history`"
+            class="file-icon-button workspace-history-link"
+            aria-label="Історія версій"
+            title="Історія версій"
+          >
+            <svg
+              viewBox="0 0 20 20"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.4"
+              aria-hidden="true"
+            >
+              <path d="M3.4 8a7 7 0 1 1 .7 6.4M3 4.5V8h3.5m3.5-2v4l2.8 1.6" />
+            </svg>
+          </RouterLink>
+        </div>
+        <div v-if="!historyOpen && !state.conflict" class="workspace-command-bar">
+          <button
+            class="button button-primary compile-command"
+            :disabled="
+              restoreLocked ||
+              compilation.state.busy ||
+              savingForCompile ||
+              state.status === 'conflict'
+            "
+            @click="requestCompile"
+          >
+            {{ savingForCompile ? 'Збереження…' : 'Скомпілювати' }}
+          </button>
+          <button
+            v-if="outputVisible || compilation.state.revision"
+            class="button button-quiet output-toggle"
+            :aria-pressed="showOutput"
+            :aria-controls="showOutput ? 'workspace-output' : undefined"
+            @click="toggleOutput"
+          >
+            {{ onlyOutput ? 'Редактор' : 'Результат' }}
+          </button>
+          <span
+            v-if="!showOutput && compileStatus"
+            class="workspace-compile-status"
+            role="status"
+            >{{ compileStatus }}</span
+          >
+        </div>
       </div>
+      <p v-if="compileError && !historyOpen" class="editor-notice" role="alert">
+        {{ compileError }}
+      </p>
+      <div
+        v-if="restoreError || restoring"
+        class="editor-notice"
+        :role="restoreError ? 'alert' : 'status'"
+      >
+        <p>{{ restoring ? 'Відновлення версії…' : restoreError }}</p>
+        <button
+          v-if="restoreAttempt && !restoring"
+          class="button button-secondary"
+          :disabled="atRisk"
+          @click="retryRestore"
+        >
+          {{ restoreAttempt.result ? 'Оновити файли' : 'Повторити відновлення' }}
+        </button>
+      </div>
+      <p v-else-if="restoreNotice" class="workspace-restore-notice" role="status">
+        {{ restoreNotice }}
+      </p>
       <div v-if="state.saveError && !state.conflict" class="editor-notice" role="alert">
         <div class="editor-notice-detail">
           <p>{{ state.saveError }}</p>
@@ -291,7 +798,7 @@ onBeforeUnmount(() => {
             {{ state.conflictLoading ? 'Завантаження…' : 'Порівняти версії' }}
           </button>
           <button
-            v-else
+            v-else-if="atRisk"
             class="button button-secondary"
             :disabled="state.status === 'saving'"
             @click="model.save()"
@@ -330,7 +837,11 @@ onBeforeUnmount(() => {
             >
           </div>
         </section>
-        <article v-for="file in state.conflict.files" :key="file.fileId" class="conflict-file">
+        <article
+          v-for="file in state.conflict.files"
+          :key="file.fileId ?? 'context'"
+          class="conflict-file"
+        >
           <h3>{{ file.path }}</h3>
           <div v-if="file.remote !== null" class="conflict-columns">
             <label
@@ -386,37 +897,59 @@ onBeforeUnmount(() => {
           <button class="button button-secondary" @click="downloadCopy">Завантажити копію</button>
         </div>
       </section>
+      <WorkspaceHistory
+        v-if="historyOpen && !state.conflict"
+        :project-id="projectId"
+        :head-id="state.snapshot.revision.id"
+        :can-restore="canRestore"
+        :busy="restoring"
+        @restore="restoreVersion"
+        @refresh="refreshHistoryHead"
+      />
       <div
-        v-else
+        v-if="!state.conflict"
+        v-show="!historyOpen"
         class="editor-layout"
-        :class="{ 'editor-without-files': isMobile || !filesVisible }"
+        :class="{
+          'editor-without-files': isMobile || !filesVisible || onlyOutput,
+          'editor-with-output': canSplit && showOutput,
+        }"
       >
         <aside
           v-if="!isMobile"
-          v-show="filesVisible"
+          v-show="filesVisible && !onlyOutput"
           id="workspace-files"
           class="editor-files"
           aria-label="Файли проєкту"
         >
           <div class="editor-files-heading">
             <h2>Файли</h2>
-            <button
-              class="file-icon-button"
-              aria-label="Новий файл"
-              title="Новий файл"
-              :disabled="actionsDisabled"
-              @click="openFileAction('create')"
-            >
-              <svg
-                viewBox="0 0 20 20"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.4"
-                aria-hidden="true"
+            <div class="editor-files-actions">
+              <button
+                class="button button-quiet add-resource"
+                :disabled="actionsDisabled || state.status === 'saving'"
+                @click="openResource(false)"
               >
-                <path d="M10 4v12M4 10h12" />
-              </svg>
-            </button>
+                Додати ресурс
+              </button>
+              <button
+                class="file-icon-button"
+                aria-label="Новий файл"
+                title="Новий файл"
+                :disabled="actionsDisabled"
+                @click="openFileAction('create')"
+              >
+                <svg
+                  viewBox="0 0 20 20"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.4"
+                  aria-hidden="true"
+                >
+                  <path d="M10 4v12M4 10h12" />
+                </svg>
+              </button>
+            </div>
           </div>
           <WorkspaceFiles
             :files="state.snapshot.tree"
@@ -428,8 +961,8 @@ onBeforeUnmount(() => {
             @select="selectFile"
           />
         </aside>
-        <section class="editor-source" aria-label="Редактор файла">
-          <div class="editor-file-bar">
+        <section v-show="!onlyOutput" class="editor-source" aria-label="Редактор файла">
+          <div v-show="!contextOpen" class="editor-file-bar">
             <h2>
               <svg
                 viewBox="0 0 16 16"
@@ -477,6 +1010,14 @@ onBeforeUnmount(() => {
                   Перейменувати файл
                 </button>
                 <button
+                  v-if="selectedMeta?.contentKind === 'binary'"
+                  data-file-action
+                  :disabled="state.status === 'saving'"
+                  @click="openResource(true)"
+                >
+                  Замінити ресурс
+                </button>
+                <button
                   v-if="
                     selectedMeta?.contentKind === 'text' &&
                     selectedMeta.path.endsWith('.typ') &&
@@ -493,20 +1034,48 @@ onBeforeUnmount(() => {
               </div>
             </div>
           </div>
-          <p v-if="state.fileLoading" role="status" class="editor-file-message">
+          <section v-show="contextOpen" id="workspace-context" class="workspace-context">
+            <label for="project-context-input">Контекст проєкту</label>
+            <textarea
+              id="project-context-input"
+              ref="contextInput"
+              :value="state.contextText"
+              :readonly="state.conflictLoading || restoreLocked"
+              placeholder="Вимоги, домовленості та примітки до документа"
+              @input="model.editContext(($event.target as HTMLTextAreaElement).value)"
+              @keydown.ctrl.s.prevent="model.save()"
+              @keydown.meta.s.prevent="model.save()"
+              @compositionstart="model.composition(true)"
+              @compositionend="model.composition(false)"
+              @blur="model.composition(false)"
+            />
+          </section>
+          <p v-if="!contextOpen && state.fileLoading" role="status" class="editor-file-message">
             Завантаження файла…
           </p>
-          <div v-else-if="state.fileError" role="alert" class="editor-file-message">
+          <div v-else-if="!contextOpen && state.fileError" role="alert" class="editor-file-message">
             <p>{{ state.fileError }}</p>
             <button class="button button-secondary" @click="model.select(state.selectedId)">
               Повторити завантаження
             </button>
           </div>
-          <p v-else-if="selectedMeta?.contentKind === 'binary'" class="editor-file-message">
-            Цей файл не містить редагованого тексту.
-          </p>
+          <div
+            v-else-if="!contextOpen && selectedMeta?.contentKind === 'binary'"
+            class="editor-file-message"
+          >
+            <p>Цей файл не містить редагованого тексту.</p>
+            <button
+              class="button button-secondary"
+              :disabled="downloading"
+              @click="downloadResource"
+            >
+              {{ downloading ? 'Скачуємо…' : 'Скачати файл' }}
+            </button>
+            <p v-if="downloadError" role="alert" class="field-error">{{ downloadError }}</p>
+          </div>
           <TextEditor
             v-show="
+              !contextOpen &&
               selected &&
               !state.fileLoading &&
               !state.fileError &&
@@ -517,6 +1086,7 @@ onBeforeUnmount(() => {
             :model-value="selected?.content ?? ''"
             :reset-key="state.resetKey"
             :readonly="
+              restoreLocked ||
               state.conflictLoading ||
               state.structure.some(
                 (operation) =>
@@ -528,6 +1098,17 @@ onBeforeUnmount(() => {
             @composition="model.composition"
           />
         </section>
+        <WorkspaceOutput
+          v-if="compilation.state.revision"
+          v-show="showOutput"
+          :output="compilation.state"
+          :head-id="state.snapshot.revision.id"
+          :unsaved="atRisk"
+          :can-open-file="canOpenDiagnostic"
+          @retry="compilation.retry"
+          @source="openDiagnostic"
+          @download="downloadPdf"
+        />
       </div>
       <div class="mobile-files-modal">
         <ModalDialog
@@ -568,6 +1149,13 @@ onBeforeUnmount(() => {
               <path d="M10 4v12M4 10h12" />
             </svg>
           </button>
+          <button
+            class="button button-quiet drawer-resource"
+            :disabled="actionsDisabled || state.status === 'saving'"
+            @click="openResource(false)"
+          >
+            Додати ресурс
+          </button>
           <WorkspaceFiles
             :files="state.snapshot.tree"
             :selected-id="state.selectedId"
@@ -593,6 +1181,39 @@ onBeforeUnmount(() => {
         @dismiss="dismissFileAction"
         @closed="fileActionClosed"
       />
+      <ResourceDialog
+        :open="!!resourceAction"
+        :replacement-path="resourceAction?.path"
+        :files="state.snapshot.tree"
+        :busy="resourceBusy || state.status === 'saving'"
+        :uploading="resourceUploading"
+        :locked="resourceAttempted && !!state.pending && state.status !== 'saving'"
+        :error="resourceError || (resourceAttempted ? state.saveError : '')"
+        @submit="submitResource"
+        @retry="retryResource"
+        @dismiss="dismissResource"
+        @closed="resourceClosed"
+      />
+      <ModalDialog
+        :open="!!compileChoice"
+        title="Скомпілювати документ"
+        @dismiss="compileChoice = null"
+      >
+        <p>У редакторі є зміни. Яку версію скомпілювати?</p>
+        <div class="editor-actions compile-options">
+          <button
+            class="button button-primary"
+            :disabled="state.status === 'conflict'"
+            @click="saveAndCompile"
+          >
+            Зберегти й скомпілювати
+          </button>
+          <button v-if="compileChoice" class="button button-secondary" @click="compileSavedVersion">
+            Скомпілювати версію {{ compileChoice.number }}
+          </button>
+          <button class="button button-quiet" @click="compileChoice = null">Скасувати</button>
+        </div>
+      </ModalDialog>
     </template>
   </section>
 </template>

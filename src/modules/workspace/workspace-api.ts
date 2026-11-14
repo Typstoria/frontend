@@ -2,18 +2,23 @@ import { ApiError } from '../../shared/api/client';
 import type { RequestOptions } from '../../shared/api/client';
 import type { components } from '../../shared/api/schema';
 import { parseProject } from '../projects/projects-api';
+import { matchesResourceType, maxResourceBytes } from './resource-formats';
 
 export type Snapshot = components['schemas']['ProjectStateDto'];
 export type TextFile = components['schemas']['ProjectTextFileDto'];
 export type TextChange = components['schemas']['UpdateTextDto'];
+export type ContextChange = components['schemas']['UpdateContextDto'];
 export type StructureChange =
   | components['schemas']['CreateTextFileDto']
   | components['schemas']['RenameFileDto']
   | components['schemas']['DeleteFileDto']
-  | components['schemas']['SetEntrypointDto'];
-export type FileChange = TextChange | StructureChange;
+  | components['schemas']['SetEntrypointDto']
+  | components['schemas']['AttachFileDto']
+  | components['schemas']['ReplaceFileDto'];
+export type FileChange = TextChange | ContextChange | StructureChange;
 export type Changes = { baseRevisionId: number; operations: FileChange[] };
 export type SaveResult = components['schemas']['ProjectChangesResultDto'];
+export type ProjectUpload = components['schemas']['ProjectUploadDto'];
 type Request = (path: string, options?: Omit<RequestOptions, 'accessToken'>) => Promise<unknown>;
 const record = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null;
 export const validId = (v: unknown): v is number =>
@@ -131,7 +136,7 @@ export function parseSaved(
     invalid();
   if (operations) {
     const paths = operations
-      .filter((op) => op.type === 'createFile')
+      .filter((op) => op.type === 'createFile' || op.type === 'attachFile')
       .map((op) => op.path.normalize('NFC'));
     if (
       paths.length !== createdFiles.length ||
@@ -187,3 +192,62 @@ export function createWorkspaceApi(request: Request) {
   };
 }
 export type WorkspaceApi = ReturnType<typeof createWorkspaceApi>;
+
+export function createResourceApi(request: Request) {
+  return {
+    async upload(projectId: number, file: File, signal: AbortSignal): Promise<ProjectUpload> {
+      if (!validId(projectId)) throw new Error('Invalid project ID');
+      if (file.size < 1 || file.size > maxResourceBytes) throw new Error('Invalid resource size');
+      const extension = file.name.split('.').at(-1)?.toLowerCase() ?? '';
+      const filename = `resource.${extension}`;
+      const multipart = new FormData();
+      // The project path is sent in the attach operation. Keep multipart decoding
+      // of the source name separate from the destination path.
+      multipart.append('file', file, filename);
+      const result = await request(`/projects/${projectId}/uploads`, {
+        method: 'POST',
+        multipart,
+        signal,
+      });
+      if (
+        !record(result) ||
+        !validId(result.uploadId) ||
+        result.filename !== filename ||
+        typeof result.mediaType !== 'string' ||
+        !matchesResourceType(result.filename, result.mediaType) ||
+        !matchesResourceType(file.name, result.mediaType) ||
+        result.sizeBytes !== file.size ||
+        !hash(result.sha256) ||
+        result.status !== 'available' ||
+        typeof result.expiresAt !== 'string' ||
+        !Number.isFinite(Date.parse(result.expiresAt))
+      )
+        invalid();
+      return {
+        uploadId: result.uploadId,
+        filename: result.filename,
+        mediaType: result.mediaType,
+        sizeBytes: file.size,
+        sha256: result.sha256,
+        status: 'available',
+        expiresAt: result.expiresAt,
+      };
+    },
+    async download(
+      projectId: number,
+      file: Snapshot['tree'][number],
+      revisionId: number,
+      signal: AbortSignal,
+    ) {
+      if (![projectId, file.fileId, revisionId].every(validId)) throw new Error('Invalid ID');
+      const blob = await request(`/projects/${projectId}/files/${file.fileId}/download`, {
+        query: { revisionId },
+        responseType: 'blob',
+        signal,
+      });
+      if (!(blob instanceof Blob) || blob.size !== file.sizeBytes || blob.type !== file.mediaType)
+        invalid();
+      return blob;
+    },
+  };
+}

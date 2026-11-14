@@ -70,6 +70,40 @@ function deferred<T>() {
 }
 
 describe('workspace autosave', () => {
+  it('keeps a newer context draft when an atomic context and text save finishes', async () => {
+    const { model, api, state } = fixture();
+    await model.load();
+    const response = deferred<SaveResult>();
+    vi.mocked(api.save).mockReturnValueOnce(response.promise);
+    model.edit(1, 'changed file');
+    model.editContext('  context 🙂\n');
+    const saving = model.save();
+    model.editContext('later');
+    response.resolve(result());
+    await saving;
+    expect(vi.mocked(api.save).mock.calls[0]?.[1].operations).toEqual([
+      { type: 'updateText', fileId: 1, content: 'changed file' },
+      { type: 'updateContext', content: '  context 🙂\n' },
+    ]);
+    expect(state.snapshot?.contextText).toBe('  context 🙂\n');
+    expect(state.contextText).toBe('later');
+    expect(model.recover()?.contextText).toBe('later');
+  });
+
+  it('keeps dirty context when a staged resource expires during attachment', async () => {
+    const { model, api, state } = fixture();
+    await model.load();
+    model.editContext('unsaved context');
+    vi.mocked(api.save).mockRejectedValueOnce(new ApiError(409, 'UPLOAD_EXPIRED', '', null));
+    expect(await model.mutate([{ type: 'attachFile', path: 'figure.png', uploadId: 7 }])).toBe(
+      false,
+    );
+    expect(state.status).toBe('failed');
+    expect(state.pending).toBeNull();
+    expect(state.structure).toEqual([]);
+    expect(state.contextText).toBe('unsaved context');
+    expect(model.atRisk.value).toBe(true);
+  });
   it('ignores a late initial snapshot after leaving the workspace', async () => {
     const { model, api, state } = fixture();
     const response = deferred<Snapshot>();
@@ -114,7 +148,7 @@ describe('workspace autosave', () => {
     model.edit(1, 'sent');
     const saving = model.save();
     model.edit(1, 'base1');
-    await model.save();
+    expect(model.save()).toBe(saving);
     expect(api.save).toHaveBeenCalledOnce();
     expect(model.atRisk.value).toBe(true);
     pending.resolve(result());

@@ -13,6 +13,8 @@ export class ApiError extends Error {
 export interface RequestOptions {
   method?: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
   body?: unknown;
+  multipart?: FormData;
+  responseType?: 'blob';
   accessToken?: string;
   idempotencyKey?: string;
   signal?: AbortSignal;
@@ -33,19 +35,28 @@ export function createApiClient(baseUrl: string, transport: typeof fetch = fetch
     if (!/^\/[a-zA-Z0-9][a-zA-Z0-9/_-]*$/.test(path)) {
       throw new Error('Use a relative API path without query strings or fragments.');
     }
-    const headers = new Headers({ Accept: 'application/json' });
+    if (options.multipart && options.body !== undefined) throw new Error('Choose one request body');
+    const headers = new Headers({
+      Accept: options.responseType === 'blob' ? 'application/octet-stream' : 'application/json',
+    });
     if (options.body !== undefined) headers.set('Content-Type', 'application/json');
     if (options.accessToken) headers.set('Authorization', `Bearer ${options.accessToken}`);
     if (options.idempotencyKey) headers.set('Idempotency-Key', options.idempotencyKey);
 
-    const timeout = AbortSignal.timeout(15_000);
+    const timeout = AbortSignal.timeout(
+      options.multipart || options.responseType === 'blob' ? 120_000 : 15_000,
+    );
     const query = new URLSearchParams();
     for (const [key, value] of Object.entries(options.query ?? {})) query.set(key, String(value));
     const search = query.size ? `?${query}` : '';
     const response = await transport(`${baseUrl.replace(/\/$/, '')}${path}${search}`, {
       method: options.method ?? 'GET',
       headers,
-      ...(options.body !== undefined ? { body: JSON.stringify(options.body) } : {}),
+      ...(options.multipart
+        ? { body: options.multipart }
+        : options.body !== undefined
+          ? { body: JSON.stringify(options.body) }
+          : {}),
       signal: options.signal ? AbortSignal.any([options.signal, timeout]) : timeout,
       credentials: 'omit',
       cache: 'no-store',
@@ -53,6 +64,7 @@ export function createApiClient(baseUrl: string, transport: typeof fetch = fetch
     });
 
     if (response.status === 204) return undefined;
+    if (response.ok && options.responseType === 'blob') return response.blob();
     const data: unknown = await response.json().catch(() => undefined);
     if (!response.ok) {
       const error = isRecord(data) && isRecord(data.error) ? data.error : undefined;

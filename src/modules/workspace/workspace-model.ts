@@ -22,9 +22,10 @@ export type Recovery = {
   conflict: Conflict | null;
   structure: StructureChange[];
   structureLabels: string[];
+  contextText?: string;
 };
 export type ConflictFile = {
-  fileId: number;
+  fileId: number | null;
   path: string;
   base: string;
   local: string;
@@ -40,6 +41,8 @@ export function describeStructure(operation: StructureChange, files: Snapshot['t
   if (operation.type === 'createFile') return `Створити ${operation.path}`;
   if (operation.type === 'renameFile') return `Перейменувати ${source} → ${operation.path}`;
   if (operation.type === 'deleteFile') return `Видалити ${source}`;
+  if (operation.type === 'attachFile') return `Додати ${operation.path}`;
+  if (operation.type === 'replaceFile') return `Замінити ${source}`;
   return `Головний файл: ${operation.path}`;
 }
 
@@ -48,7 +51,9 @@ export function workspaceError(error: unknown, fallback: string): string {
     if (error.status === 404) return 'Проєкт або файл недоступний.';
     if (error.status === 401) return 'Сеанс завершився. Увійдіть знову, щоб продовжити.';
     if (error.status === 403) return 'Немає доступу до цього проєкту.';
-    if (error.status === 413) return 'Зміни завеликі. Зменште обсяг тексту.';
+    if (error.code === 'SNAPSHOT_TOO_LARGE')
+      return 'Проєкт перевищує ліміт 64 МіБ. Зменште обсяг файлів або контексту.';
+    if (error.status === 413) return 'Зміни завеликі. Зменште їхній обсяг.';
     if (error.status === 429) return 'Забагато запитів. Спробуйте трохи пізніше.';
     if (error.status === 422)
       return 'Не вдалося застосувати зміни файлів. Перевірте шляхи та головний файл.';
@@ -60,6 +65,7 @@ export function createWorkspaceModel(projectId: number, api: WorkspaceApi, delay
   const state = reactive({
     snapshot: null as Snapshot | null,
     files: {} as Record<number, Draft>,
+    contextText: '',
     selectedId: 0,
     loading: false,
     fileLoading: false,
@@ -79,10 +85,14 @@ export function createWorkspaceModel(projectId: number, api: WorkspaceApi, delay
   let timer: ReturnType<typeof setTimeout> | undefined;
   let active = true;
   let composing = false;
+  let autosavePaused = false;
+  let saving: Promise<void> | undefined;
   let fileSequence = 0;
   const dirty = computed(
     () =>
-      state.structure.length > 0 || Object.values(state.files).some((f) => f.base !== f.content),
+      state.structure.length > 0 ||
+      state.contextText !== (state.snapshot?.contextText ?? '') ||
+      Object.values(state.files).some((f) => f.base !== f.content),
   );
   const atRisk = computed(() => dirty.value || state.pending !== null);
   const clearTimer = () => {
@@ -91,7 +101,7 @@ export function createWorkspaceModel(projectId: number, api: WorkspaceApi, delay
   };
   function schedule() {
     clearTimer();
-    if (!active || composing || state.status !== 'dirty') return;
+    if (!active || composing || autosavePaused || state.status !== 'dirty') return;
     timer = setTimeout(() => {
       void save();
     }, delay);
@@ -127,6 +137,7 @@ export function createWorkspaceModel(projectId: number, api: WorkspaceApi, delay
     try {
       if (recovery) {
         state.snapshot = recovery.snapshot;
+        state.contextText = recovery.contextText ?? recovery.snapshot.contextText;
         state.files = recovery.files;
         state.pending = recovery.pending;
         state.conflict = recovery.conflict;
@@ -157,6 +168,7 @@ export function createWorkspaceModel(projectId: number, api: WorkspaceApi, delay
         const snapshot = await api.state(projectId, controller.signal);
         if (!active) return;
         state.snapshot = snapshot;
+        state.contextText = snapshot.contextText;
       }
       if (!active) return;
       await select(state.snapshot!.mainFileId);
@@ -178,6 +190,14 @@ export function createWorkspaceModel(projectId: number, api: WorkspaceApi, delay
     )
       return;
     file.content = content;
+    draftChanged();
+  }
+  function editContext(content: string) {
+    if (!state.snapshot || state.conflict || state.conflictLoading) return;
+    state.contextText = content;
+    draftChanged();
+  }
+  function draftChanged() {
     if (
       ['clean', 'dirty', 'failed'].includes(state.status) &&
       !(state.status === 'failed' && state.structure.length)
@@ -192,7 +212,21 @@ export function createWorkspaceModel(projectId: number, api: WorkspaceApi, delay
     if (value) clearTimer();
     else schedule();
   }
-  async function save() {
+  function pauseAutosave(value: boolean) {
+    autosavePaused = value;
+    schedule();
+  }
+  function save() {
+    if (saving) return saving;
+    const attempt = performSave();
+    saving = attempt;
+    const clear = () => {
+      if (saving === attempt) saving = undefined;
+    };
+    void attempt.then(clear, clear);
+    return attempt;
+  }
+  async function performSave() {
     clearTimer();
     if (!active || composing || !state.snapshot || ['saving', 'conflict'].includes(state.status))
       return;
@@ -213,9 +247,12 @@ export function createWorkspaceModel(projectId: number, api: WorkspaceApi, delay
           fileId: Number(fileId),
           content: f.content,
         }));
+      if (state.contextText !== state.snapshot.contextText)
+        operations.push({ type: 'updateContext', content: state.contextText });
       operations.push(...(JSON.parse(JSON.stringify(state.structure)) as StructureChange[]));
       if (!operations.length) {
         state.status = 'clean';
+        state.saveError = '';
         return;
       }
       const body: Changes = { baseRevisionId: state.snapshot.revision.id, operations };
@@ -230,7 +267,9 @@ export function createWorkspaceModel(projectId: number, api: WorkspaceApi, delay
           'Зміни завеликі: до 1 МіБ тексту на файл, 200 файлів і 8 МіБ на збереження. Зменште обсяг або завантажте копію.';
         return;
       }
-      const created = state.structure.find((op) => op.type === 'createFile');
+      const created = state.structure.find(
+        (op) => op.type === 'createFile' || op.type === 'attachFile',
+      );
       state.pending = {
         body,
         key: crypto.randomUUID(),
@@ -245,7 +284,9 @@ export function createWorkspaceModel(projectId: number, api: WorkspaceApi, delay
         attempt.result ?? (await api.save(projectId, attempt.body, attempt.key, controller.signal));
       if (!active) return;
       attempt.result = result;
-      const structural = attempt.body.operations.some((op) => op.type !== 'updateText');
+      const structural = attempt.body.operations.some(
+        (op) => op.type !== 'updateText' && op.type !== 'updateContext',
+      );
       const snapshot = structural
         ? await api.state(projectId, controller.signal, result.revisionId)
         : null;
@@ -253,7 +294,9 @@ export function createWorkspaceModel(projectId: number, api: WorkspaceApi, delay
       for (const change of attempt.body.operations) {
         if (change.type === 'updateText' && state.files[change.fileId])
           state.files[change.fileId]!.base = change.content;
-        if (change.type === 'createFile') {
+        if (change.type === 'updateContext' && !snapshot)
+          state.snapshot.contextText = change.content;
+        if (change.type === 'createFile' || change.type === 'attachFile') {
           const file = result.createdFiles.find(
             (file) => file.path === change.path.normalize('NFC'),
           );
@@ -263,11 +306,12 @@ export function createWorkspaceModel(projectId: number, api: WorkspaceApi, delay
               (meta) =>
                 meta.fileId === file.fileId &&
                 meta.path === file.path &&
-                meta.contentKind === 'text',
+                meta.contentKind === (change.type === 'createFile' ? 'text' : 'binary'),
             )
           )
             throw new ApiError(200, 'INVALID_RESPONSE', '', null);
-          state.files[file.fileId] = { base: change.content, content: change.content };
+          if (change.type === 'createFile')
+            state.files[file.fileId] = { base: change.content, content: change.content };
         }
       }
       if (snapshot) {
@@ -298,6 +342,12 @@ export function createWorkspaceModel(projectId: number, api: WorkspaceApi, delay
       if (attempt.result) {
         state.status = 'refresh_failed';
         state.saveError = 'Зміни збережено. Не вдалося оновити список файлів. Повторіть оновлення.';
+      } else if (error instanceof ApiError && error.code === 'UPLOAD_EXPIRED') {
+        state.pending = null;
+        state.structure = [];
+        state.structureLabels = [];
+        state.status = 'failed';
+        state.saveError = 'Термін дії завантаження минув. Додайте ресурс знову.';
       } else if (error instanceof ApiError && error.status === 409) {
         state.pending = null;
         state.status = 'conflict';
@@ -322,6 +372,7 @@ export function createWorkspaceModel(projectId: number, api: WorkspaceApi, delay
       composing ||
       !state.snapshot ||
       state.fileLoading ||
+      (state.structure.length > 0 && state.status !== 'failed') ||
       state.pending ||
       state.conflict ||
       state.conflictLoading ||
@@ -335,7 +386,7 @@ export function createWorkspaceModel(projectId: number, api: WorkspaceApi, delay
     );
     state.status = 'dirty';
     await save();
-    return !state.pending && state.structure.length === 0;
+    return !state.pending && state.structure.length === 0 && !state.saveError;
   }
   function cancelStructure() {
     if (state.pending || ['saving', 'conflict'].includes(state.status)) return;
@@ -352,6 +403,16 @@ export function createWorkspaceModel(projectId: number, api: WorkspaceApi, delay
     try {
       const snapshot = await api.state(projectId, controller.signal);
       const files: ConflictFile[] = [];
+      if (state.contextText !== state.snapshot!.contextText)
+        files.push({
+          fileId: null,
+          path: 'Контекст проєкту',
+          base: state.snapshot!.contextText,
+          local: state.contextText,
+          remote: snapshot.contextText,
+          merged: state.contextText,
+          useRemote: false,
+        });
       for (const [id, draft] of Object.entries(state.files)) {
         if (draft.base === draft.content) continue;
         const fileId = Number(id);
@@ -379,7 +440,14 @@ export function createWorkspaceModel(projectId: number, api: WorkspaceApi, delay
                   operations: JSON.parse(JSON.stringify(state.structure)) as StructureChange[],
                   description: state.structureLabels.join(' · '),
                   include: false,
-                  error: structureError(state.structure, snapshot),
+                  error: state.structure.some((op) => {
+                    if (op.type !== 'replaceFile') return false;
+                    const previous = state.snapshot!.tree.find((f) => f.fileId === op.fileId);
+                    const current = snapshot.tree.find((f) => f.fileId === op.fileId);
+                    return previous?.sha256 !== current?.sha256 || previous?.path !== current?.path;
+                  })
+                    ? 'Ресурс змінився на сервері. Перегляньте актуальний файл перед заміною.'
+                    : structureError(state.structure, snapshot),
                 },
               ]
             : [],
@@ -399,8 +467,11 @@ export function createWorkspaceModel(projectId: number, api: WorkspaceApi, delay
     if (!conflict) return;
     // Keep only explicitly reviewed local edits; other files load from the new snapshot.
     state.files = {};
+    state.contextText = conflict.snapshot.contextText;
     for (const file of conflict.files) {
-      if (file.remote !== null)
+      if (file.fileId === null)
+        state.contextText = file.useRemote ? conflict.snapshot.contextText : file.merged;
+      else if (file.remote !== null)
         state.files[file.fileId] = {
           base: file.remote,
           content: file.useRemote ? file.remote : file.merged,
@@ -423,11 +494,32 @@ export function createWorkspaceModel(projectId: number, api: WorkspaceApi, delay
     await select(selected);
     schedule();
   }
+  function canRefresh() {
+    return active && !composing && !atRisk.value && state.status === 'clean' && !!state.snapshot;
+  }
+  async function refreshHead() {
+    if (!canRefresh()) return null;
+    const previous = state.snapshot!.revision.id;
+    const snapshot = await api.state(projectId, controller.signal);
+    if (!canRefresh() || state.snapshot!.revision.id !== previous) return null;
+    if (snapshot.revision.id !== previous) {
+      const selected = snapshot.tree.some((file) => file.fileId === state.selectedId)
+        ? state.selectedId
+        : snapshot.mainFileId;
+      state.snapshot = snapshot;
+      state.files = {};
+      state.contextText = snapshot.contextText;
+      state.resetKey++;
+      await select(selected);
+    }
+    return snapshot;
+  }
   function recover(): Recovery | null {
     if (!state.snapshot || !atRisk.value) return null;
     return structuredClone({
       snapshot: JSON.parse(JSON.stringify(state.snapshot)) as Snapshot,
       files: JSON.parse(JSON.stringify(state.files)) as Record<number, Draft>,
+      contextText: state.contextText,
       pending: state.pending ? (JSON.parse(JSON.stringify(state.pending)) as Attempt) : null,
       status: state.status,
       structure: JSON.parse(JSON.stringify(state.structure)) as StructureChange[],
@@ -450,12 +542,15 @@ export function createWorkspaceModel(projectId: number, api: WorkspaceApi, delay
     load,
     select,
     edit,
+    editContext,
+    pauseAutosave,
     composition,
     save,
     mutate,
     cancelStructure,
     compare,
     resolve,
+    refreshHead,
     recover,
     dispose,
   };
