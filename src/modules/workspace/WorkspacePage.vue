@@ -69,7 +69,14 @@ const compilation = createCompilationModel(
 );
 const compileStatus = computed(() => {
   const output = compilation.state;
-  if (output.busy) return output.job?.status === 'queued' ? 'У черзі…' : 'Компіляція…';
+  if (output.busy)
+    return output.startupStage === 'lookup'
+      ? 'Завантаження PDF…'
+      : output.startupStage === 'ensure'
+        ? 'Запуск компіляції…'
+        : output.job?.status === 'queued'
+          ? 'У черзі…'
+          : 'Компіляція…';
   if (output.error) {
     if (output.retry === 'status') return 'Статус невідомий';
     if (output.job?.status === 'succeeded') return 'PDF недоступний';
@@ -85,6 +92,8 @@ const savingForCompile = ref(false);
 const compileChoice = ref<{ id: number; number: number } | null>(null);
 const compileError = ref('');
 const restoreLocked = computed(() => restoring.value || !!restoreAttempt.value);
+let workspaceLoaded = false;
+let startupAttempted = false;
 const resourceApi = createResourceApi(identitySession.request);
 const resourceController = new AbortController();
 const contextOpen = ref(false);
@@ -178,7 +187,10 @@ watch(historyOpen, (open) => {
     if (resourceAction.value && !resourceBusy.value && !state.pending) dismissResource();
     if (fileAction.value && !submittingFileAction.value && !state.pending) dismissFileAction();
     void refreshHistoryHead();
-  } else if (!restoreLocked.value) restoreError.value = '';
+  } else {
+    if (!restoreLocked.value) restoreError.value = '';
+    if (workspaceLoaded) initializeWorkspaceOutput();
+  }
 });
 
 function requestCompile() {
@@ -630,14 +642,26 @@ function downloadBlob(blob: Blob, filename: string) {
   link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+function initializeWorkspaceOutput() {
+  if (historyOpen.value) return;
+  outputVisible.value = true;
+  if (!startupAttempted) {
+    startupAttempted = true;
+    void compilation.openStartup();
+  }
+}
+async function loadWorkspace() {
+  await model.load(takeWorkspaceRecovery(ownerId, projectId));
+  if (restoreController.signal.aborted || !state.snapshot || state.error) return;
+  workspaceLoaded = true;
+  initializeWorkspaceOutput();
+  if (historyOpen.value) void refreshHistoryHead();
+}
 onMounted(() => {
   mobileQuery.addEventListener('change', viewportChanged);
   splitQuery.addEventListener('change', splitChanged);
   document.addEventListener('pointerdown', closeFileMenu);
-  void model.load(takeWorkspaceRecovery(ownerId, projectId)).then(() => {
-    if (restoreController.signal.aborted) return;
-    if (historyOpen.value) void refreshHistoryHead();
-  });
+  void loadWorkspace();
 });
 onBeforeUnmount(() => {
   resourceController.abort();
@@ -660,7 +684,7 @@ onBeforeUnmount(() => {
     <div v-if="state.loading" class="editor-state" role="status">Завантаження проєкту…</div>
     <div v-else-if="state.error" class="editor-state" role="alert">
       <p>{{ state.error }}</p>
-      <button class="button button-secondary" @click="model.load()">Повторити</button>
+      <button class="button button-secondary" @click="loadWorkspace">Повторити</button>
     </div>
     <template v-else-if="state.snapshot">
       <div
@@ -1099,7 +1123,6 @@ onBeforeUnmount(() => {
           />
         </section>
         <WorkspaceOutput
-          v-if="compilation.state.revision"
           v-show="showOutput"
           :output="compilation.state"
           :head-id="state.snapshot.revision.id"

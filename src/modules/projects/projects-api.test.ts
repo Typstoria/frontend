@@ -70,6 +70,22 @@ describe('project response boundary', () => {
       expect(() => parseProjectList(page, 5)).toThrow();
   });
 
+  it('sends a trimmed search with the server-side pagination request', async () => {
+    const request = vi.fn().mockResolvedValue({ items: [], nextCursor: null });
+    const api = createProjectsApi(request);
+    const signal = new AbortController().signal;
+    await expect(api.list(21, signal, '  test & %_  ')).resolves.toEqual({
+      items: [],
+      nextCursor: null,
+    });
+    expect(request).toHaveBeenCalledWith('/projects', {
+      query: { limit: 20, cursor: 21, search: 'test & %_' },
+      signal,
+    });
+    await api.list(undefined, signal, '   ');
+    expect(request).toHaveBeenLastCalledWith('/projects', { query: { limit: 20 }, signal });
+  });
+
   it('checks create metadata before using the returned project ID', () => {
     const created = {
       projectId: 5,

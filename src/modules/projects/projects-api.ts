@@ -147,10 +147,15 @@ export function createProjectsApi(request: Request) {
     });
   }
   return {
-    async list(cursor?: number, signal?: AbortSignal) {
+    async list(cursor?: number, signal?: AbortSignal, search?: string) {
+      const normalizedSearch = search?.trim();
       return parseProjectList(
         await request('/projects', {
-          query: { limit: 20, ...(cursor === undefined ? {} : { cursor }) },
+          query: {
+            limit: 20,
+            ...(cursor === undefined ? {} : { cursor }),
+            ...(normalizedSearch ? { search: normalizedSearch } : {}),
+          },
           ...(signal ? { signal } : {}),
         }),
         cursor,

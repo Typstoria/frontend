@@ -13,6 +13,8 @@ type Dialog = { kind: 'create' } | { kind: 'rename' | 'delete'; project: Project
 const api = createProjectsApi(identitySession.request);
 const controller = new AbortController();
 const projects = ref<Project[]>([]);
+const searchInput = ref('');
+const appliedSearch = ref('');
 const nextCursor = ref<number | null>(null);
 const loaded = ref(false);
 const loading = ref<'reset' | 'more' | null>(null);
@@ -28,6 +30,11 @@ const mutationError = ref('');
 const busy = ref(false);
 const unavailable = ref(false);
 let failedLoad: 'reset' | 'more' = 'reset';
+let listController: AbortController | null = null;
+let listGeneration = 0;
+let searchTimer: ReturnType<typeof setTimeout> | undefined;
+let refreshAfterDialog = false;
+let pendingSearchReload = false;
 // Keep the key across explicit retries and closing/reopening a failed create dialog.
 // It stays in this page's memory, alongside the current session, never browser storage.
 let createAttempt: { title: string; key: string } | null = null;
@@ -36,30 +43,63 @@ const dialogTitle = computed(() => {
   if (dialog.value?.kind === 'create') return 'Новий проєкт';
   return dialog.value?.kind === 'rename' ? 'Перейменувати проєкт' : 'Видалити проєкт?';
 });
+const showGridSkeleton = computed(() => loading.value === 'reset' && projects.value.length === 0);
 const dateFormat = new Intl.DateTimeFormat('uk-UA', { dateStyle: 'medium', timeStyle: 'short' });
 
-async function load(kind: 'reset' | 'more' = 'reset') {
+async function load(kind: 'reset' | 'more' = 'reset', search = appliedSearch.value) {
   if (loading.value || dialog.value) return;
   if (kind === 'more' && nextCursor.value === null) return;
+  const generation = ++listGeneration;
+  const requestController = new AbortController();
+  listController = requestController;
   loading.value = kind;
   listError.value = '';
   activeActions.value = null;
   try {
-    const page = await api.list(kind === 'more' ? nextCursor.value! : undefined, controller.signal);
-    controller.signal.throwIfAborted();
+    const page = await api.list(
+      kind === 'more' ? nextCursor.value! : undefined,
+      requestController.signal,
+      search,
+    );
+    if (generation !== listGeneration) return;
+    requestController.signal.throwIfAborted();
     projects.value = kind === 'reset' ? page.items : [...projects.value, ...page.items];
     nextCursor.value = page.nextCursor;
     loaded.value = true;
   } catch (error) {
-    if (controller.signal.aborted) return;
+    if (requestController.signal.aborted || generation !== listGeneration) return;
     failedLoad = kind;
     listError.value =
       error instanceof ApiError && error.status === 429
         ? 'Забагато запитів. Спробуйте трохи пізніше.'
         : 'Не вдалося завантажити проєкти. Перевірте підключення та повторіть спробу.';
   } finally {
-    loading.value = null;
+    if (generation === listGeneration) {
+      loading.value = null;
+      listController = null;
+    }
   }
+}
+
+function searchChanged() {
+  if (searchTimer) clearTimeout(searchTimer);
+  const nextSearch = searchInput.value.trim();
+  if (nextSearch === appliedSearch.value && (listController || loaded.value)) return;
+  listController?.abort();
+  listController = null;
+  listGeneration++;
+  loading.value = null;
+  projects.value = [];
+  nextCursor.value = null;
+  loaded.value = false;
+  listError.value = '';
+  activeActions.value = null;
+  appliedSearch.value = nextSearch;
+  searchTimer = setTimeout(() => {
+    searchTimer = undefined;
+    if (dialog.value) pendingSearchReload = true;
+    else void load('reset', nextSearch);
+  }, 300);
 }
 
 async function toggleActions(projectId: number) {
@@ -115,6 +155,11 @@ async function closed() {
     !projects.value.some((project) => project.id === current.project.id)
   )
     document.getElementById('new-project')?.focus();
+  if (refreshAfterDialog || pendingSearchReload) {
+    refreshAfterDialog = false;
+    pendingSearchReload = false;
+    void load('reset');
+  }
 }
 
 async function submit() {
@@ -140,11 +185,13 @@ async function submit() {
         (a, b) => b.id - a.id,
       );
       createAttempt = null;
+      refreshAfterDialog = appliedSearch.value !== '';
       notice.value = 'Проєкт створено.';
     } else if (current.kind === 'rename') {
       const project = await api.rename(current.project.id, title.value, controller.signal);
       controller.signal.throwIfAborted();
       projects.value = projects.value.map((item) => (item.id === project.id ? project : item));
+      refreshAfterDialog = appliedSearch.value !== '';
       notice.value = 'Назву збережено.';
     } else {
       try {
@@ -155,6 +202,7 @@ async function submit() {
       }
       controller.signal.throwIfAborted();
       projects.value = projects.value.filter((item) => item.id !== current.project.id);
+      refreshAfterDialog = appliedSearch.value !== '';
       notice.value = 'Проєкт видалено.';
     }
     busy.value = false;
@@ -193,6 +241,8 @@ onMounted(() => {
 });
 onBeforeUnmount(() => {
   controller.abort();
+  listController?.abort();
+  if (searchTimer) clearTimeout(searchTimer);
   createAttempt = null;
   document.removeEventListener('pointerdown', closeActions);
 });
@@ -202,18 +252,44 @@ onBeforeUnmount(() => {
   <section class="page projects-page" aria-labelledby="projects-title">
     <div class="page-heading projects-heading">
       <h1 id="projects-title">Ваші проєкти</h1>
-      <button
-        id="new-project"
-        class="button button-primary projects-create"
-        :disabled="!!loading"
-        @click="openDialog({ kind: 'create' })"
-      >
-        <span aria-hidden="true">+</span> Новий проєкт
-      </button>
+      <div class="projects-toolbar-actions">
+        <div class="projects-search">
+          <svg aria-hidden="true" viewBox="0 0 20 20" focusable="false">
+            <circle cx="8.7" cy="8.7" r="5.5" />
+            <path d="m13 13 4 4" />
+          </svg>
+          <input
+            id="projects-search"
+            v-model="searchInput"
+            type="search"
+            maxlength="200"
+            autocomplete="off"
+            placeholder="Пошук проєктів"
+            aria-label="Пошук проєктів"
+            :disabled="dialogOpen"
+            @input="searchChanged"
+          />
+        </div>
+        <button
+          id="new-project"
+          class="button button-primary projects-create"
+          :disabled="!!loading"
+          @click="openDialog({ kind: 'create' })"
+        >
+          <span aria-hidden="true">+</span> Новий проєкт
+        </button>
+      </div>
     </div>
 
     <p v-if="notice" class="projects-notice" role="status">{{ notice }}</p>
-    <p v-if="loading === 'reset'" class="projects-loading" role="status">Завантаження проєктів…</p>
+    <p
+      v-if="loading === 'reset'"
+      class="projects-loading"
+      :class="{ 'projects-loading-visually-hidden': showGridSkeleton }"
+      role="status"
+    >
+      Завантаження проєктів…
+    </p>
     <div v-if="listError" class="form-message form-error projects-error" role="alert">
       <p>{{ listError }}</p>
       <button class="text-button" :disabled="!!loading" @click="load(failedLoad)">Повторити</button>
@@ -277,8 +353,19 @@ onBeforeUnmount(() => {
         </div>
       </li>
     </ul>
+    <ul v-else-if="showGridSkeleton" class="project-list project-skeleton-list" aria-hidden="true">
+      <li v-for="index in 8" :key="index" class="project-card project-card-skeleton">
+        <div class="project-info">
+          <div class="project-preview project-skeleton-preview">
+            <span class="project-skeleton-shimmer"></span>
+          </div>
+          <div class="project-skeleton-title project-skeleton-shimmer"></div>
+          <div class="project-skeleton-date project-skeleton-shimmer"></div>
+        </div>
+      </li>
+    </ul>
     <div v-else-if="loaded && !loading && !listError" class="empty-state panel projects-empty">
-      <p>Проєктів ще немає</p>
+      <p>{{ appliedSearch ? 'Проєктів не знайдено' : 'Проєктів ще немає' }}</p>
     </div>
     <div v-if="nextCursor !== null" class="projects-pagination">
       <button class="button button-secondary" :disabled="!!loading" @click="load('more')">

@@ -5,7 +5,7 @@ import { workspaceError } from './workspace-model';
 
 type Revision = { id: number; number: number };
 type Artifact = { job: Compilation; revision: Revision; pdf: Blob };
-type Retry = 'status' | 'pdf' | null;
+type Retry = 'status' | 'pdf' | 'startup' | null;
 const activeJob = (job: Compilation) => job.status === 'queued' || job.status === 'running';
 
 export function compilationFailure(job: Compilation) {
@@ -32,9 +32,11 @@ export function createCompilationModel(api: CompilationApi) {
     busy: false,
     error: '',
     retry: null as Retry,
+    startupStage: null as 'lookup' | 'ensure' | null,
   });
   let controller: AbortController | undefined;
   let expiry: ReturnType<typeof setTimeout> | undefined;
+  let disposed = false;
 
   function pause(ms: number, signal: AbortSignal) {
     return new Promise<void>((resolve) => {
@@ -65,9 +67,15 @@ export function createCompilationModel(api: CompilationApi) {
     );
   }
 
-  async function fetchPdf(job: Compilation, revision: Revision, signal: AbortSignal) {
+  async function fetchPdf(
+    job: Compilation,
+    revision: Revision,
+    signal: AbortSignal,
+    onUnavailable?: () => void,
+  ) {
     if (!job.artifactAvailable || Date.parse(job.artifactExpiresAt!) <= Date.now()) {
       state.error = 'PDF більше недоступний. Скомпілюйте документ ще раз.';
+      onUnavailable?.();
       return;
     }
     try {
@@ -75,6 +83,7 @@ export function createCompilationModel(api: CompilationApi) {
       if (signal.aborted) return;
       if (Date.parse(job.artifactExpiresAt!) <= Date.now()) {
         state.error = 'Термін дії PDF минув. Скомпілюйте документ ще раз.';
+        onUnavailable?.();
         return;
       }
       setArtifact({ job, revision, pdf });
@@ -82,6 +91,7 @@ export function createCompilationModel(api: CompilationApi) {
       if (signal.aborted) return;
       if (error instanceof ApiError && error.code === 'ARTIFACT_UNAVAILABLE') {
         state.error = 'PDF більше недоступний. Скомпілюйте документ ще раз.';
+        onUnavailable?.();
         return;
       }
       state.error = workspaceError(error, 'Не вдалося завантажити PDF.');
@@ -89,7 +99,12 @@ export function createCompilationModel(api: CompilationApi) {
     }
   }
 
-  async function track(job: Compilation, revision: Revision, signal: AbortSignal) {
+  async function track(
+    job: Compilation,
+    revision: Revision,
+    signal: AbortSignal,
+    onUnavailable?: () => void,
+  ) {
     const deadline = Date.now() + 120_000;
     let delay = 600;
     let failures = 0;
@@ -116,7 +131,7 @@ export function createCompilationModel(api: CompilationApi) {
     if (activeJob(job)) {
       state.error = 'Компіляція ще триває. Статус можна перевірити знову.';
       state.retry = 'status';
-    } else if (job.status === 'succeeded') await fetchPdf(job, revision, signal);
+    } else if (job.status === 'succeeded') await fetchPdf(job, revision, signal, onUnavailable);
     else state.error = compilationFailure(job);
   }
 
@@ -127,9 +142,11 @@ export function createCompilationModel(api: CompilationApi) {
     state.busy = true;
     state.error = '';
     state.retry = null;
+    state.startupStage = null;
     try {
       await action(signal);
     } finally {
+      state.startupStage = null;
       if (!signal.aborted) state.busy = false;
     }
   }
@@ -155,19 +172,61 @@ export function createCompilationModel(api: CompilationApi) {
     });
   }
 
+  async function openStartup() {
+    if (state.busy || disposed) return;
+    await run(async (signal) => {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        let startup;
+        state.startupStage = 'lookup';
+        try {
+          startup = await api.latestPdf(signal);
+          if (signal.aborted) return;
+          if (!startup) {
+            state.startupStage = 'ensure';
+            startup = await api.ensure(signal);
+          }
+        } catch (error) {
+          if (!signal.aborted) {
+            state.error = workspaceError(error, 'Не вдалося відкрити PDF. Спробуйте ще раз.');
+            state.retry = 'startup';
+          }
+          return;
+        }
+        if (signal.aborted || disposed) return;
+        state.startupStage = null;
+        const revision = { id: startup.job.revisionId, number: startup.revisionNumber };
+        state.revision = revision;
+        state.job = startup.job;
+        state.error = '';
+        let unavailable = false;
+        await track(startup.job, revision, signal, () => {
+          unavailable = true;
+        });
+        if (!unavailable || attempt === 1 || signal.aborted) return;
+        // Expiry can race the lookup/download. Recheck once; generic network or
+        // storage failures never become a reason to queue another compilation.
+        state.error = '';
+        state.retry = null;
+      }
+    });
+  }
+
   async function retry() {
     const { job, revision, retry } = state;
-    if (!job || !revision || !retry || state.busy) return;
+    if (!retry || state.busy) return;
+    if (retry === 'startup') return openStartup();
+    if (!job || !revision) return;
     await run((signal) =>
       retry === 'status' ? track(job, revision, signal) : fetchPdf(job, revision, signal),
     );
   }
 
   function dispose() {
+    disposed = true;
     controller?.abort();
     clearTimeout(expiry);
     state.artifact = null;
   }
 
-  return { state, start, retry, dispose };
+  return { state, start, openStartup, retry, dispose };
 }

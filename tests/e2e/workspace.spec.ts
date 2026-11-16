@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 import type { Page, Route } from '@playwright/test';
 import type { Changes } from '../../src/modules/workspace/workspace-api';
 import { readFile } from 'node:fs/promises';
+import { installWorkspaceStartupMock } from './workspace-startup-fixture';
 
 const user = {
   id: 1,
@@ -103,6 +104,7 @@ async function installWorkspaceApi(
     save?: (route: Route, body: Changes, call: number) => Promise<void> | void;
   } = {},
 ) {
+  await installWorkspaceStartupMock(page);
   await page.route('**/api/projects?*', (route) =>
     route.fulfill({ json: { items: [project], nextCursor: null } }),
   );
@@ -172,12 +174,12 @@ test('opens a private project from its list and reloads accepted Unicode text wi
   expect(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)).toBe(
     false,
   );
-  await expect(page.getByRole('status')).toContainText('Незбережені зміни');
+  await expect(page.locator('.editor-save-status')).toContainText('Незбережені зміни');
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z');
   await expect(editor).toContainText('# Початок');
   await editor.fill(edited);
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+s' : 'Control+s');
-  await expect(page.getByRole('status')).toContainText('Збережено');
+  await expect(page.locator('.editor-save-status')).toContainText('Збережено');
   await page.reload();
   await expect(await sourceEditor(page)).toContainText('🙂 Український текст');
   await expect(page.locator('body')).not.toContainText('workspace-private-request');
@@ -266,7 +268,7 @@ test('pauses autosave during IME composition and schedules it after composition 
   expect(saveCalls()).toBe(0);
   await editor.dispatchEvent('compositionend');
   await expect.poll(() => saveCalls()).toBe(1);
-  await expect(page.getByRole('status')).toContainText('Збережено');
+  await expect(page.locator('.editor-save-status')).toContainText('Збережено');
 });
 
 test('keeps long documents inside the editor viewport on short and narrow screens', async ({
@@ -439,7 +441,7 @@ test('retries an unknown save outcome with the same key and immutable payload', 
   if (attempts[2]!.body.operations[0]!.type === 'updateText') {
     expect(attempts[2]!.body.operations[0]!.content).toBe('# новіший текст');
   }
-  await expect(page.getByRole('status')).toContainText('Збережено');
+  await expect(page.locator('.editor-save-status')).toContainText('Збережено');
 });
 
 test('requires explicit conflict comparison and applies a reviewed merge', async ({

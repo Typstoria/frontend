@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { expect, test, type Page, type Route } from '@playwright/test';
 import type { Compilation } from '../../src/modules/workspace/compilation-api';
+import { installWorkspaceStartupMock } from './workspace-startup-fixture';
 
 const date = '2026-11-12T10:30:00Z';
 const hash = 'a'.repeat(64);
@@ -174,6 +175,7 @@ async function installWorkspace(page: Page, initialHead = 100) {
       },
     });
   });
+  await installWorkspaceStartupMock(page, initialHead);
   return { server, text };
 }
 
@@ -300,6 +302,7 @@ test('keeps warnings visible during a delayed PDF download and its retry', async
   });
   await page.goto('/projects/1');
   await page.getByRole('button', { name: 'Скомпілювати', exact: true }).click();
+  await page.getByRole('button', { name: 'Діагностика (1)', exact: true }).click();
   const warning = page.getByText('Test warning', { exact: true });
   await expect(warning).toBeVisible();
   await expect.poll(() => downloads).toBe(1);
@@ -312,6 +315,7 @@ test('keeps warnings visible during a delayed PDF download and its retry', async
   await expect.poll(() => downloads).toBe(2);
   await expect(warning).toBeVisible();
   release();
+  await page.getByRole('button', { name: 'PDF', exact: true }).click();
   await expect(page.getByLabel('Текст сторінки')).toContainText('Research report');
   await page.getByRole('button', { name: 'Діагностика (1)', exact: true }).click();
   await expect(warning).toBeVisible();
@@ -343,8 +347,8 @@ test('opens diagnostics in the source and preserves the editor after a Typst err
   await page.goto('/projects/1');
   await page.getByRole('button', { name: 'Скомпілювати', exact: true }).click();
   await expect(page.getByText('unclosed delimiter')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'PDF', exact: true })).toHaveCount(0);
-  await expect(page.getByRole('heading', { name: 'Діагностика (1)', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'PDF', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Діагностика (1)', exact: true }).click();
   await page
     .getByRole('region', { name: 'Результат компіляції' })
     .getByRole('button', { name: 'main.typ', exact: true })

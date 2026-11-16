@@ -84,6 +84,98 @@ test('distinguishes a loading failure from an empty list and retries', async ({ 
   await expect(page.getByRole('alert')).toHaveCount(0);
 });
 
+test('shows accessible skeleton cards while the project list is loading', async ({ page }) => {
+  let releaseResponse!: () => void;
+  let requestArrived!: () => void;
+  const pendingResponse = new Promise<void>((resolve) => (releaseResponse = resolve));
+  const requestStarted = new Promise<void>((resolve) => (requestArrived = resolve));
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.route('**/api/projects?*', async (route) => {
+    requestArrived();
+    await pendingResponse;
+    await route.fulfill({
+      json: { items: [project(11, 'Завантажений проєкт')], nextCursor: null },
+    });
+  });
+
+  await signIn(page);
+  await requestStarted;
+  const skeletons = page.locator('.project-card-skeleton');
+  await expect(skeletons).toHaveCount(8);
+  await expect(page.getByRole('status')).toHaveText('Завантаження проєктів…');
+  await expect(page.getByText('Проєктів ще немає', { exact: true })).toHaveCount(0);
+  await expect
+    .poll(() =>
+      skeletons
+        .first()
+        .locator('.project-skeleton-shimmer')
+        .first()
+        .evaluate((element) => getComputedStyle(element).animationName),
+    )
+    .toBe('none');
+
+  releaseResponse();
+  await expect(skeletons).toHaveCount(0);
+  await expect(rows(page)).toHaveCount(1);
+  await expect(rows(page)).toContainText('Завантажений проєкт');
+});
+
+test('searches server results as the query changes and clear restores the full list', async ({
+  page,
+}) => {
+  const allProjects = [project(12, 'Курсова робота'), project(10, 'Конспект')];
+  await page.route('**/api/projects?*', (route) => {
+    const url = new URL(route.request().url());
+    const search = url.searchParams.get('search');
+    return route.fulfill({
+      json: {
+        items: search ? [project(20, 'Фізика & математика')] : allProjects,
+        nextCursor: null,
+      },
+    });
+  });
+  await signIn(page);
+  await expect(rows(page)).toHaveCount(2);
+  const search = page.getByRole('searchbox', { name: 'Пошук проєктів' });
+  await search.fill('  фізика &  ');
+  await expect(rows(page)).toHaveCount(1);
+  await expect(rows(page)).toContainText('Фізика & математика');
+  await expect(rows(page)).not.toContainText('Курсова робота');
+  await search.fill('');
+  await expect(rows(page)).toHaveCount(2);
+  await expect(rows(page).first()).toContainText('Курсова робота');
+});
+
+test('does not let an older search response replace the latest query', async ({ page }) => {
+  let releaseOld!: () => void;
+  let oldRequestArrived!: () => void;
+  const oldRequest = new Promise<void>((resolve) => (oldRequestArrived = resolve));
+  await page.route('**/api/projects?*', async (route) => {
+    const search = new URL(route.request().url()).searchParams.get('search');
+    if (search === 'старий') {
+      oldRequestArrived();
+      await new Promise<void>((resolve) => (releaseOld = resolve));
+      await route
+        .fulfill({ json: { items: [project(18, 'Старий результат')], nextCursor: null } })
+        .catch(() => {});
+      return;
+    }
+    const items = search === 'новий' ? [project(19, 'Новий результат')] : [];
+    await route.fulfill({ json: { items, nextCursor: null } });
+  });
+  await signIn(page);
+  const search = page.getByRole('searchbox', { name: 'Пошук проєктів' });
+  await search.fill('старий');
+  await oldRequest;
+  await search.fill('новий');
+  await expect(rows(page)).toHaveCount(1);
+  await expect(rows(page)).toContainText('Новий результат');
+  releaseOld();
+  await page.waitForTimeout(50);
+  await expect(rows(page)).toHaveCount(1);
+  await expect(rows(page)).toContainText('Новий результат');
+});
+
 test('creates, renames and deletes projects with validation and explicit confirmation', async ({
   page,
 }) => {

@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { expect, test } from '@playwright/test';
 import type { Page, Route } from '@playwright/test';
 import type { Changes } from '../../src/modules/workspace/workspace-api';
+import { installWorkspaceStartupMock } from './workspace-startup-fixture';
 
 const user = {
   id: 1,
@@ -194,6 +195,7 @@ async function installApi(
   let uploadCalls = 0;
   let postCalls = 0;
   let downloadCalls = 0;
+  await installWorkspaceStartupMock(page, server.revisionId);
   await page.route('**/api/projects?*', (route) =>
     route.fulfill({ json: { items: [project], nextCursor: null } }),
   );
@@ -361,7 +363,7 @@ test('saves project context with text and reloads the accepted context', async (
   const context = page.getByLabel('Контекст проєкту', { exact: true });
   await context.fill('Домовленість: використовувати українську мову.');
   await context.press(process.platform === 'darwin' ? 'Meta+s' : 'Control+s');
-  await expect(page.getByRole('status')).toContainText('Збережено');
+  await expect(page.locator('.editor-save-status')).toContainText('Збережено');
   expect(api.bodies).toHaveLength(1);
   expect(api.bodies[0]!.operations).toEqual([
     { type: 'updateText', fileId: 10, content: '# Змінений документ' },
@@ -406,7 +408,7 @@ test('compares server context and requires an explicit merge before saving', asy
   expect(api.bodies[1]!.operations).toEqual([
     { type: 'updateContext', content: 'Узгоджений контекст' },
   ]);
-  await expect(page.getByRole('status')).toContainText('Збережено');
+  await expect(page.locator('.editor-save-status')).toContainText('Збережено');
   expect(api.server.contextText).toBe('Узгоджений контекст');
 });
 

@@ -771,6 +771,40 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/projects/{projectId}/compilations/latest-pdf': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Most recent unexpired PDF of an accepted document, never a proposal preview. */
+    get: operations['CompilationsController_latestPdf'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/projects/{projectId}/compilations/ensure': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Open the last PDF, reuse current work, or queue the current saved revision. */
+    post: operations['CompilationsController_ensure'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/projects/{projectId}/compilations/{jobId}': {
     parameters: {
       query?: never;
@@ -1886,6 +1920,10 @@ export interface components {
       artifactAvailable: boolean;
       diagnostics: components['schemas']['CompileDiagnosticDto'][];
     };
+    WorkspaceCompilationDto: {
+      job: components['schemas']['CompilationDto'] | null;
+      revisionNumber: number | null;
+    };
     LiveHealthDto: {
       /** Format: date-time */
       timestamp: string;
@@ -1928,6 +1966,8 @@ export interface operations {
         cursor?: number;
         /** @description Number of projects per page. */
         limit?: number;
+        /** @description Optional case-insensitive title substring; surrounding whitespace is ignored. */
+        search?: string;
       };
       header?: never;
       path?: never;
@@ -2006,6 +2046,8 @@ export interface operations {
         cursor?: number;
         /** @description Number of projects per page. */
         limit?: number;
+        /** @description Optional case-insensitive title substring; surrounding whitespace is ignored. */
+        search?: string;
       };
       header?: never;
       path?: never;
@@ -2893,6 +2935,8 @@ export interface operations {
         cursor?: number;
         /** @description Number of projects per page. */
         limit?: number;
+        /** @description Optional case-insensitive title substring; surrounding whitespace is ignored. */
+        search?: string;
       };
       header?: never;
       path?: never;
@@ -3594,6 +3638,8 @@ export interface operations {
         cursor?: number;
         /** @description Number of projects per page. */
         limit?: number;
+        /** @description Optional case-insensitive title substring; surrounding whitespace is ignored. */
+        search?: string;
       };
       header?: never;
       path: {
@@ -3923,6 +3969,8 @@ export interface operations {
         cursor?: number;
         /** @description Number of projects per page. */
         limit?: number;
+        /** @description Optional case-insensitive title substring; surrounding whitespace is ignored. */
+        search?: string;
       };
       header?: never;
       path: {
@@ -5203,6 +5251,152 @@ export interface operations {
         };
         content: {
           'application/json': components['schemas']['CompilationDto'];
+        };
+      };
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+    };
+  };
+  CompilationsController_latestPdf: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        projectId: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['WorkspaceCompilationDto'];
+        };
+      };
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+    };
+  };
+  CompilationsController_ensure: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        projectId: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['WorkspaceCompilationDto'];
         };
       };
       400: {

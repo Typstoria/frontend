@@ -5,6 +5,7 @@ import { validId } from './workspace-api';
 // This workspace compiles accepted revisions; proposal previews use a separate flow.
 export type Compilation = components['schemas']['CompilationDto'] & { revisionId: number };
 export type Diagnostic = components['schemas']['CompileDiagnosticDto'];
+export type StartupCompilation = { job: Compilation; revisionNumber: number };
 type Request = (path: string, options?: Omit<RequestOptions, 'accessToken'>) => Promise<unknown>;
 const statuses = ['queued', 'running', 'succeeded', 'failed', 'timed_out', 'cancelled'];
 const record = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null;
@@ -55,7 +56,34 @@ function parseJob(value: unknown, projectId: number, revisionId: number, jobId?:
 
 export function createCompilationApi(projectId: number, request: Request) {
   const path = `/projects/${projectId}/compilations`;
+  function parseStartup(value: unknown, mode: 'latest' | 'ensure'): StartupCompilation | null {
+    if (!record(value)) invalid();
+    if (value.job === null && value.revisionNumber === null && mode === 'latest') return null;
+    if (!record(value.job) || !validId(value.job.revisionId) || !validId(value.revisionNumber))
+      invalid();
+    const job = parseJob(value.job, projectId, value.job.revisionId);
+    if (
+      job.proposalId !== null ||
+      job.candidateVersion !== null ||
+      job.candidateSnapshotId !== null ||
+      (mode === 'latest' && (job.status !== 'succeeded' || !job.artifactAvailable)) ||
+      (mode === 'ensure' && !['queued', 'running', 'succeeded'].includes(job.status))
+    )
+      invalid();
+    return { job, revisionNumber: value.revisionNumber };
+  }
   return {
+    async latestPdf(signal: AbortSignal) {
+      return parseStartup(await request(`${path}/latest-pdf`, { signal }), 'latest');
+    },
+    async ensure(signal: AbortSignal) {
+      const result = parseStartup(
+        await request(`${path}/ensure`, { method: 'POST', signal }),
+        'ensure',
+      );
+      if (!result) invalid();
+      return result;
+    },
     async start(revisionId: number, signal: AbortSignal) {
       if (![projectId, revisionId].every(validId)) throw new Error('Invalid revision ID');
       return parseJob(

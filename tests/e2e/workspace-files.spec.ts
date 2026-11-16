@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import type { Page, Route } from '@playwright/test';
 import type { Changes } from '../../src/modules/workspace/workspace-api';
+import { installWorkspaceStartupMock } from './workspace-startup-fixture';
 
 const user = {
   id: 1,
@@ -170,6 +171,7 @@ async function installApi(
   const keys: (string | undefined)[] = [];
   let postCalls = 0;
   let stateFailures = 0;
+  await installWorkspaceStartupMock(page, server.revisionId);
   await page.route('**/api/projects?*', (route) =>
     route.fulfill({ json: { items: [project], nextCursor: null } }),
   );
@@ -323,7 +325,7 @@ test('deletes a dirty main file and selects its replacement in one atomic batch'
   const api = await installApi(page);
   await openWorkspace(page);
   await editor(page).fill('# Локальна зміна перед видаленням');
-  await expect(page.getByRole('status')).toContainText('Незбережені зміни');
+  await expect(page.locator('.editor-save-status')).toContainText('Незбережені зміни');
   await fileMenu(page, 'main.typ', 'Видалити файл');
   await expect(page.getByRole('heading', { name: 'Видалити файл?', exact: true })).toBeVisible();
   await page
@@ -381,7 +383,7 @@ test('saves existing dirty text and a new file in the same batch', async ({ page
   const api = await installApi(page);
   await openWorkspace(page);
   await editor(page).fill('# Зміна тексту');
-  await expect(page.getByRole('status')).toContainText('Незбережені зміни');
+  await expect(page.locator('.editor-save-status')).toContainText('Незбережені зміни');
   await openNewFileDialog(page);
   await page.getByLabel('Шлях файла', { exact: true }).fill('appendix.typ');
   await page.getByRole('button', { name: 'Створити', exact: true }).click();

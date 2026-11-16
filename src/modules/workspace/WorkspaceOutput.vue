@@ -24,6 +24,8 @@ const previousPdf = computed(() => {
   );
 });
 const progress = computed(() => {
+  if (props.output.startupStage === 'lookup') return 'Завантаження PDF…';
+  if (props.output.startupStage === 'ensure') return 'Запуск компіляції…';
   if (props.output.job?.status === 'queued') return 'У черзі…';
   if (props.output.job?.status === 'running') return 'Компіляція…';
   if (props.output.job?.status === 'succeeded') return 'Завантаження PDF…';
@@ -85,7 +87,13 @@ watch(
       <p v-if="output.busy" role="status">{{ progress }}</p>
       <p v-else role="alert">{{ output.error }}</p>
       <button v-if="output.retry" class="button button-quiet" @click="emit('retry')">
-        {{ output.retry === 'status' ? 'Перевірити статус' : 'Повторити завантаження' }}
+        {{
+          output.retry === 'status'
+            ? 'Перевірити статус'
+            : output.retry === 'startup'
+              ? 'Повторити'
+              : 'Повторити завантаження'
+        }}
       </button>
     </div>
     <div v-if="mode === 'diagnostics' && diagnostics.length" class="output-diagnostics">
