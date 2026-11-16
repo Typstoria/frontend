@@ -18,6 +18,8 @@ const appliedSearch = ref('');
 const nextCursor = ref<number | null>(null);
 const loaded = ref(false);
 const loading = ref<'reset' | 'more' | null>(null);
+const searchDebouncing = ref(false);
+const skeletonReady = ref(false);
 const listError = ref('');
 const notice = ref('');
 const activeActions = ref<number | null>(null);
@@ -33,6 +35,7 @@ let failedLoad: 'reset' | 'more' = 'reset';
 let listController: AbortController | null = null;
 let listGeneration = 0;
 let searchTimer: ReturnType<typeof setTimeout> | undefined;
+let skeletonTimer: ReturnType<typeof setTimeout> | undefined;
 let refreshAfterDialog = false;
 let pendingSearchReload = false;
 // Keep the key across explicit retries and closing/reopening a failed create dialog.
@@ -43,7 +46,14 @@ const dialogTitle = computed(() => {
   if (dialog.value?.kind === 'create') return 'Новий проєкт';
   return dialog.value?.kind === 'rename' ? 'Перейменувати проєкт' : 'Видалити проєкт?';
 });
-const showGridSkeleton = computed(() => loading.value === 'reset' && projects.value.length === 0);
+const showGridSkeleton = computed(
+  () => skeletonReady.value && loading.value === 'reset' && projects.value.length === 0,
+);
+function clearSkeleton() {
+  clearTimeout(skeletonTimer);
+  skeletonTimer = undefined;
+  skeletonReady.value = false;
+}
 const dateFormat = new Intl.DateTimeFormat('uk-UA', { dateStyle: 'medium', timeStyle: 'short' });
 
 async function load(kind: 'reset' | 'more' = 'reset', search = appliedSearch.value) {
@@ -53,6 +63,12 @@ async function load(kind: 'reset' | 'more' = 'reset', search = appliedSearch.val
   const requestController = new AbortController();
   listController = requestController;
   loading.value = kind;
+  clearSkeleton();
+  if (kind === 'reset' && projects.value.length === 0) {
+    skeletonTimer = setTimeout(() => {
+      if (generation === listGeneration && loading.value === 'reset') skeletonReady.value = true;
+    }, 200);
+  }
   listError.value = '';
   activeActions.value = null;
   try {
@@ -75,6 +91,7 @@ async function load(kind: 'reset' | 'more' = 'reset', search = appliedSearch.val
         : 'Не вдалося завантажити проєкти. Перевірте підключення та повторіть спробу.';
   } finally {
     if (generation === listGeneration) {
+      clearSkeleton();
       loading.value = null;
       listController = null;
     }
@@ -82,21 +99,24 @@ async function load(kind: 'reset' | 'more' = 'reset', search = appliedSearch.val
 }
 
 function searchChanged() {
-  if (searchTimer) clearTimeout(searchTimer);
   const nextSearch = searchInput.value.trim();
-  if (nextSearch === appliedSearch.value && (listController || loaded.value)) return;
+  if (nextSearch === appliedSearch.value) return;
+  if (searchTimer) clearTimeout(searchTimer);
   listController?.abort();
   listController = null;
   listGeneration++;
   loading.value = null;
-  projects.value = [];
+  clearSkeleton();
+  // Retain the previous result until the replacement response is ready.
+  // Its cursor cannot be reused with a different query.
   nextCursor.value = null;
-  loaded.value = false;
+  searchDebouncing.value = true;
   listError.value = '';
   activeActions.value = null;
   appliedSearch.value = nextSearch;
   searchTimer = setTimeout(() => {
     searchTimer = undefined;
+    searchDebouncing.value = false;
     if (dialog.value) pendingSearchReload = true;
     else void load('reset', nextSearch);
   }, 300);
@@ -243,6 +263,7 @@ onBeforeUnmount(() => {
   controller.abort();
   listController?.abort();
   if (searchTimer) clearTimeout(searchTimer);
+  clearSkeleton();
   createAttempt = null;
   document.removeEventListener('pointerdown', closeActions);
 });
@@ -284,8 +305,7 @@ onBeforeUnmount(() => {
     <p v-if="notice" class="projects-notice" role="status">{{ notice }}</p>
     <p
       v-if="loading === 'reset'"
-      class="projects-loading"
-      :class="{ 'projects-loading-visually-hidden': showGridSkeleton }"
+      class="projects-loading projects-loading-visually-hidden"
       role="status"
     >
       Завантаження проєктів…
@@ -364,7 +384,10 @@ onBeforeUnmount(() => {
         </div>
       </li>
     </ul>
-    <div v-else-if="loaded && !loading && !listError" class="empty-state panel projects-empty">
+    <div
+      v-else-if="loaded && !loading && !searchDebouncing && !listError"
+      class="empty-state panel projects-empty"
+    >
       <p>{{ appliedSearch ? 'Проєктів не знайдено' : 'Проєктів ще немає' }}</p>
     </div>
     <div v-if="nextCursor !== null" class="projects-pagination">

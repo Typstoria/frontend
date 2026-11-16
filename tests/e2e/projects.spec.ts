@@ -146,6 +146,44 @@ test('searches server results as the query changes and clear restores the full l
   await expect(rows(page).first()).toContainText('Курсова робота');
 });
 
+test('keeps current cards visible until the debounced search response arrives', async ({
+  page,
+}) => {
+  let releaseSearch!: () => void;
+  let searchRequestStarted!: () => void;
+  const pendingSearchResponse = new Promise<void>((resolve) => (releaseSearch = resolve));
+  const searchStarted = new Promise<void>((resolve) => (searchRequestStarted = resolve));
+  const currentProjects = [project(12, 'Курсова робота'), project(10, 'Конспект')];
+  await page.route('**/api/projects?*', async (route) => {
+    const search = new URL(route.request().url()).searchParams.get('search');
+    if (search) {
+      searchRequestStarted();
+      await pendingSearchResponse;
+      await route.fulfill({
+        json: { items: [project(20, 'Фізика & математика')], nextCursor: null },
+      });
+      return;
+    }
+    await route.fulfill({ json: { items: currentProjects, nextCursor: null } });
+  });
+
+  await signIn(page);
+  await expect(rows(page)).toHaveCount(2);
+  const search = page.getByRole('searchbox', { name: 'Пошук проєктів' });
+  await search.fill('фізика');
+  await expect(rows(page)).toHaveCount(2);
+  await expect(rows(page).first()).toContainText('Курсова робота');
+
+  await searchStarted;
+  await expect(rows(page)).toHaveCount(2);
+  await expect(rows(page).last()).toContainText('Конспект');
+  await expect(rows(page).first()).not.toContainText('Фізика & математика');
+
+  releaseSearch();
+  await expect(rows(page)).toHaveCount(1);
+  await expect(rows(page)).toContainText('Фізика & математика');
+});
+
 test('does not let an older search response replace the latest query', async ({ page }) => {
   let releaseOld!: () => void;
   let oldRequestArrived!: () => void;
