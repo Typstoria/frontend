@@ -295,12 +295,13 @@ async function openResources(page: Page) {
     const toggle = page.getByRole('button', { name: /(?:Показати|Приховати) файли/ });
     if ((await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click();
   }
-  await page.getByRole('button', { name: 'Додати ресурс', exact: true }).click();
-  await expect(page.getByRole('dialog', { name: 'Додати ресурс', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Додати файл', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Завантажити файл', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Завантажити файл', exact: true })).toBeVisible();
 }
 
 async function attachPng(page: Page, name = 'diagram.png') {
-  const dialog = page.getByRole('dialog', { name: 'Додати ресурс', exact: true });
+  const dialog = page.getByRole('dialog', { name: 'Завантажити файл', exact: true });
   const bytes = Buffer.from('fake-png-resource');
   await dialog.getByLabel('Вибрати файл', { exact: true }).setInputFiles({
     name,
@@ -342,7 +343,7 @@ test('repeats an uncertain attachment with the same key and without staging the 
   await openWorkspace(page);
   await openResources(page);
   await attachPng(page, 'diagram%0A.png');
-  const dialog = page.getByRole('dialog', { name: 'Додати ресурс', exact: true });
+  const dialog = page.getByRole('dialog', { name: 'Завантажити файл', exact: true });
   await dialog.getByRole('button', { name: 'Додати', exact: true }).click();
   await dialog.getByRole('button', { name: 'Повторити', exact: true }).click();
   await expect(dialog).toHaveCount(0);
@@ -460,8 +461,8 @@ test('keeps an uploaded resource staged until conflict replay is chosen, then do
   expect(await readFile(path!)).toEqual(originalBytes);
 
   await page.getByRole('button', { name: 'Дії з файлом: diagram.png', exact: true }).click();
-  await page.getByRole('button', { name: 'Замінити ресурс', exact: true }).click();
-  const replaceDialog = page.getByRole('dialog', { name: 'Замінити ресурс', exact: true });
+  await page.getByRole('button', { name: 'Замінити файл', exact: true }).click();
+  const replaceDialog = page.getByRole('dialog', { name: 'Замінити файл', exact: true });
   const replacementBytes = Buffer.from('replacement-image-bytes');
   await replaceDialog.getByLabel('Вибрати файл', { exact: true }).setInputFiles({
     name: 'replacement.png',

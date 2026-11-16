@@ -22,7 +22,7 @@ test('opens an accepted historical revision and labels the PDF revision', async 
   });
   await page.goto('/projects/1');
   await expect(page.getByRole('heading', { name: 'Startup project' })).toBeVisible();
-  const result = page.getByRole('button', { name: 'Результат', exact: true });
+  const result = page.getByRole('button', { name: 'Лише PDF', exact: true });
   if ((await result.getAttribute('aria-pressed')) === 'false') await result.click();
   await expect(page.getByText('PDF версії 2.', { exact: false })).toBeVisible();
   expect(ensureCalls).toBe(0);
@@ -150,7 +150,7 @@ test('ensures a current compilation only after latest explicitly reports no PDF'
 
   await expect.poll(() => ensureCalls).toBe(1);
   await expect(page.getByRole('button', { name: 'Скомпілювати' })).toBeEnabled();
-  const result = page.getByRole('button', { name: 'Результат', exact: true });
+  const result = page.getByRole('button', { name: 'Лише PDF', exact: true });
   if ((await result.getAttribute('aria-pressed')) === 'false') await result.click();
   await expect(page.getByRole('region', { name: 'Результат компіляції' })).toContainText(
     'Повторити завантаження',
@@ -196,7 +196,7 @@ test('does not ensure after a latest-PDF outage and allows an explicit retry', a
   });
   await page.goto('/projects/1');
   await expect(page.getByRole('heading', { name: 'Startup project' })).toBeVisible();
-  const result = page.getByRole('button', { name: 'Результат', exact: true });
+  const result = page.getByRole('button', { name: 'Лише PDF', exact: true });
   if ((await result.getAttribute('aria-pressed')) === 'false') await result.click();
   await expect(page.getByRole('button', { name: 'Повторити', exact: true })).toBeVisible();
   await expect.poll(() => ensureCalls).toBe(0);

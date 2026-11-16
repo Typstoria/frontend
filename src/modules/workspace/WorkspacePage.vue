@@ -32,6 +32,8 @@ import { createCompilationApi, type Diagnostic } from './compilation-api';
 import { createCompilationModel } from './compilation-model';
 import { createHistoryApi } from './history-api';
 import WorkspaceOutput from './WorkspaceOutput.vue';
+import FileAddMenu from './FileAddMenu.vue';
+import { openPdfTab } from './pdf-tab';
 import './workspace.css';
 
 const WorkspaceHistory = defineAsyncComponent(() => import('./WorkspaceHistory.vue'));
@@ -69,25 +71,20 @@ const compilation = createCompilationModel(
 );
 const compileStatus = computed(() => {
   const output = compilation.state;
-  if (output.busy)
-    return output.startupStage === 'lookup'
-      ? 'Завантаження PDF…'
-      : output.startupStage === 'ensure'
-        ? 'Запуск компіляції…'
-        : output.job?.status === 'queued'
-          ? 'У черзі…'
-          : 'Компіляція…';
+  if (output.busy) return output.artifact ? 'Оновлення PDF…' : 'Підготовка PDF…';
   if (output.error) {
     if (output.retry === 'status') return 'Статус невідомий';
     if (output.job?.status === 'succeeded') return 'PDF недоступний';
     if (output.job?.status === 'cancelled') return 'Скасовано';
     return 'Компіляція не вдалася';
   }
-  if (output.artifact) return 'PDF готовий';
   return '';
 });
-const outputVisible = ref(false);
-const outputActive = ref(false);
+type ViewMode = 'code' | 'split' | 'preview';
+const splitQuery = window.matchMedia('(min-width: 1024px)');
+const canSplit = ref(splitQuery.matches);
+const viewMode = ref<ViewMode>(canSplit.value ? 'split' : 'code');
+const pdfOpenError = ref('');
 const savingForCompile = ref(false);
 const compileChoice = ref<{ id: number; number: number } | null>(null);
 const compileError = ref('');
@@ -204,8 +201,8 @@ function requestCompile() {
 
 function startCompilation(revision: { id: number; number: number }) {
   if (compilation.state.busy || restoreLocked.value) return;
-  outputVisible.value = true;
-  outputActive.value = true;
+  if (effectiveViewMode.value === 'code') viewMode.value = canSplit.value ? 'split' : 'preview';
+  pdfOpenError.value = '';
   compileChoice.value = null;
   compileError.value = '';
   void compilation.start({ id: revision.id, number: revision.number });
@@ -376,7 +373,7 @@ async function downloadResource() {
     downloadBlob(blob, file.path.split('/').at(-1)!);
   } catch (error) {
     if (!resourceController.signal.aborted && state.selectedId === file.fileId)
-      downloadError.value = workspaceError(error, 'Не вдалося скачати ресурс. Спробуйте ще раз.');
+      downloadError.value = workspaceError(error, 'Не вдалося завантажити файл. Спробуйте ще раз.');
   } finally {
     downloading.value = false;
   }
@@ -492,19 +489,13 @@ async function retryFileAction() {
 }
 const mobileQuery = window.matchMedia('(max-width: 720px)');
 const isMobile = ref(mobileQuery.matches);
-const splitQuery = window.matchMedia('(min-width: 1024px)');
-const canSplit = ref(splitQuery.matches);
-const onlyOutput = computed(() => !canSplit.value && outputVisible.value && outputActive.value);
-const showOutput = computed(() => outputVisible.value && (canSplit.value || outputActive.value));
+const effectiveViewMode = computed<ViewMode>(() =>
+  viewMode.value === 'split' && !canSplit.value ? 'code' : viewMode.value,
+);
+const onlyOutput = computed(() => effectiveViewMode.value === 'preview');
+const showOutput = computed(() => effectiveViewMode.value !== 'code');
 function splitChanged(event: MediaQueryListEvent) {
   canSplit.value = event.matches;
-}
-function toggleOutput() {
-  if (canSplit.value) outputVisible.value = !outputVisible.value;
-  else {
-    outputActive.value = !onlyOutput.value;
-    outputVisible.value = true;
-  }
 }
 function canOpenDiagnostic(item: Diagnostic) {
   return (
@@ -521,6 +512,17 @@ async function openDiagnostic(item: Diagnostic) {
   await selectFile(item.fileId);
   await nextTick();
   editor.value?.focus();
+}
+function openPdf() {
+  pdfOpenError.value = '';
+  const artifact = compilation.state.artifact;
+  if (!artifact || Date.parse(artifact.job.artifactExpiresAt!) <= Date.now()) {
+    pdfOpenError.value = 'PDF більше недоступний. Скомпілюйте документ ще раз.';
+    return;
+  }
+  if (!openPdfTab(artifact.pdf))
+    pdfOpenError.value =
+      'Не вдалося відкрити PDF. Дозвольте відкриття нової вкладки й повторіть спробу.';
 }
 function downloadPdf() {
   const artifact = compilation.state.artifact;
@@ -553,7 +555,7 @@ function viewportChanged(event: MediaQueryListEvent) {
   mobileFilesVisible.value = false;
 }
 async function selectFile(fileId: number) {
-  outputActive.value = false;
+  if (onlyOutput.value) viewMode.value = canSplit.value ? 'split' : 'code';
   contextOpen.value = false;
   downloadError.value = '';
   fileMenuOpen.value = false;
@@ -644,7 +646,6 @@ function downloadBlob(blob: Blob, filename: string) {
 }
 function initializeWorkspaceOutput() {
   if (historyOpen.value) return;
-  outputVisible.value = true;
   if (!startupAttempted) {
     startupAttempted = true;
     void compilation.openStartup();
@@ -732,7 +733,9 @@ onBeforeUnmount(() => {
             v-if="historyOpen"
             :to="workspacePath"
             class="button button-quiet workspace-context-toggle"
-            >Редактор</RouterLink
+            aria-label="Повернутися до редактора"
+            title="Повернутися до редактора"
+            >← До редактора</RouterLink
           >
           <RouterLink
             v-else-if="!state.conflict"
@@ -765,15 +768,65 @@ onBeforeUnmount(() => {
           >
             {{ savingForCompile ? 'Збереження…' : 'Скомпілювати' }}
           </button>
-          <button
-            v-if="outputVisible || compilation.state.revision"
-            class="button button-quiet output-toggle"
-            :aria-pressed="showOutput"
-            :aria-controls="showOutput ? 'workspace-output' : undefined"
-            @click="toggleOutput"
-          >
-            {{ onlyOutput ? 'Редактор' : 'Результат' }}
-          </button>
+          <div class="workspace-view-modes" role="group" aria-label="Вигляд редактора">
+            <button
+              type="button"
+              class="file-icon-button"
+              title="Лише код"
+              aria-label="Лише код"
+              :aria-pressed="effectiveViewMode === 'code'"
+              @click="viewMode = 'code'"
+            >
+              <svg
+                viewBox="0 0 20 20"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.4"
+                aria-hidden="true"
+              >
+                <rect x="2.5" y="3" width="15" height="14" rx="1.5" />
+                <path d="m7.5 7-3 3 3 3m5-6 3 3-3 3" />
+              </svg>
+            </button>
+            <button
+              v-if="canSplit"
+              type="button"
+              class="file-icon-button"
+              title="Код і PDF"
+              aria-label="Код і PDF"
+              :aria-pressed="effectiveViewMode === 'split'"
+              @click="viewMode = 'split'"
+            >
+              <svg
+                viewBox="0 0 20 20"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.4"
+                aria-hidden="true"
+              >
+                <rect x="2.5" y="3" width="15" height="14" rx="1.5" />
+                <path d="M10 3v14M5 7h2.5M5 10h2.5M12.5 7H15m-2.5 3H15m-2.5 3H15" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              class="file-icon-button"
+              title="Лише PDF"
+              aria-label="Лише PDF"
+              :aria-pressed="effectiveViewMode === 'preview'"
+              @click="viewMode = 'preview'"
+            >
+              <svg
+                viewBox="0 0 20 20"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.4"
+                aria-hidden="true"
+              >
+                <path d="M5 2.5h7l3 3v12H5zM12 2.5v4h3M8 10h4m-4 3h4" />
+              </svg>
+            </button>
+          </div>
           <span
             v-if="!showOutput && compileStatus"
             class="workspace-compile-status"
@@ -782,6 +835,9 @@ onBeforeUnmount(() => {
           >
         </div>
       </div>
+      <p v-if="pdfOpenError && !historyOpen" class="editor-notice" role="alert">
+        {{ pdfOpenError }}
+      </p>
       <p v-if="compileError && !historyOpen" class="editor-notice" role="alert">
         {{ compileError }}
       </p>
@@ -936,7 +992,7 @@ onBeforeUnmount(() => {
         class="editor-layout"
         :class="{
           'editor-without-files': isMobile || !filesVisible || onlyOutput,
-          'editor-with-output': canSplit && showOutput,
+          'editor-with-output': effectiveViewMode === 'split',
         }"
       >
         <aside
@@ -948,32 +1004,12 @@ onBeforeUnmount(() => {
         >
           <div class="editor-files-heading">
             <h2>Файли</h2>
-            <div class="editor-files-actions">
-              <button
-                class="button button-quiet add-resource"
-                :disabled="actionsDisabled || state.status === 'saving'"
-                @click="openResource(false)"
-              >
-                Додати ресурс
-              </button>
-              <button
-                class="file-icon-button"
-                aria-label="Новий файл"
-                title="Новий файл"
-                :disabled="actionsDisabled"
-                @click="openFileAction('create')"
-              >
-                <svg
-                  viewBox="0 0 20 20"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.4"
-                  aria-hidden="true"
-                >
-                  <path d="M10 4v12M4 10h12" />
-                </svg>
-              </button>
-            </div>
+            <FileAddMenu
+              :disabled="actionsDisabled"
+              :upload-disabled="state.status === 'saving'"
+              @create="openFileAction('create')"
+              @upload="openResource(false)"
+            />
           </div>
           <WorkspaceFiles
             :files="state.snapshot.tree"
@@ -1039,7 +1075,7 @@ onBeforeUnmount(() => {
                   :disabled="state.status === 'saving'"
                   @click="openResource(true)"
                 >
-                  Замінити ресурс
+                  Замінити файл
                 </button>
                 <button
                   v-if="
@@ -1131,6 +1167,7 @@ onBeforeUnmount(() => {
           @retry="compilation.retry"
           @source="openDiagnostic"
           @download="downloadPdf"
+          @open="openPdf"
         />
       </div>
       <div class="mobile-files-modal">
@@ -1155,30 +1192,13 @@ onBeforeUnmount(() => {
               <path d="m5 5 10 10M15 5 5 15" />
             </svg>
           </button>
-          <button
-            class="file-icon-button drawer-new"
-            aria-label="Новий файл"
-            title="Новий файл"
+          <FileAddMenu
+            class="drawer-add"
             :disabled="actionsDisabled"
-            @click="openFileAction('create')"
-          >
-            <svg
-              viewBox="0 0 20 20"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.4"
-              aria-hidden="true"
-            >
-              <path d="M10 4v12M4 10h12" />
-            </svg>
-          </button>
-          <button
-            class="button button-quiet drawer-resource"
-            :disabled="actionsDisabled || state.status === 'saving'"
-            @click="openResource(false)"
-          >
-            Додати ресурс
-          </button>
+            :upload-disabled="state.status === 'saving'"
+            @create="openFileAction('create')"
+            @upload="openResource(false)"
+          />
           <WorkspaceFiles
             :files="state.snapshot.tree"
             :selected-id="state.selectedId"

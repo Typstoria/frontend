@@ -362,6 +362,16 @@ test('opens a focused mobile file drawer with folders and handles selection, Esc
   const drawer = page.getByRole('dialog', { name: 'Файли', exact: true });
   await expect(drawer).toBeVisible();
   await expect(page.getByRole('button', { name: 'Закрити файли', exact: true })).toBeFocused();
+  const addFile = drawer.getByRole('button', { name: 'Додати файл', exact: true });
+  await addFile.focus();
+  await page.keyboard.press('ArrowDown');
+  await expect(drawer.getByRole('menuitem', { name: 'Створити файл' })).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await expect(drawer.getByRole('menuitem', { name: 'Завантажити файл' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(drawer.getByRole('menu')).toBeHidden();
+  await expect(addFile).toBeFocused();
+  await expect(drawer).toBeVisible();
   await drawer.locator('button').last().focus();
   await page.keyboard.press('Tab');
   await expect(page.getByRole('button', { name: 'Закрити файли', exact: true })).toBeFocused();

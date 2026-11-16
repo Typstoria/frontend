@@ -83,7 +83,7 @@ function dismiss() {
 <template>
   <ModalDialog
     :open="open"
-    :title="isReplacement ? 'Замінити ресурс' : 'Додати ресурс'"
+    :title="isReplacement ? 'Замінити файл' : 'Завантажити файл'"
     :busy="busy && !uploading"
     @dismiss="dismiss"
     @closed="emit('closed')"

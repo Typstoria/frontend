@@ -517,19 +517,6 @@
 .file-action-list .danger-text {
   color: #a03036;
 }
-.file-main {
-  margin-left: auto;
-  font-size: 10px;
-  color: var(--color-muted);
-  flex-shrink: 0;
-}
-.drawer-new {
-  position: absolute;
-  top: 8px;
-  right: 52px;
-  min-height: 40px;
-  width: 40px;
-}
 @media (max-width: 720px) {
   .file-icon-button {
     min-width: 44px;
@@ -537,9 +524,6 @@
   }
   .file-action-list button {
     min-height: 44px;
-  }
-  .drawer-new {
-    top: 6px;
   }
 }
 .editor-notice-detail {
@@ -593,23 +577,6 @@
 .workspace-context textarea:focus-visible {
   outline-offset: -3px;
 }
-.editor-files-actions {
-  display: flex;
-  align-items: center;
-}
-.add-resource {
-  min-height: 34px;
-  padding-inline: 4px;
-  font-size: 12px;
-}
-.drawer-resource {
-  position: absolute;
-  top: 6px;
-  right: 98px;
-  min-height: 44px;
-  padding-inline: 6px;
-  font-size: 12px;
-}
 @media (max-width: 720px) {
   .workspace-context-toggle {
     min-height: 44px;
@@ -638,7 +605,6 @@
   padding: 4px 10px;
   font-size: 13px;
 }
-.workspace-command-bar .output-toggle[aria-pressed='true'],
 .output-modes button[aria-pressed='true'] {
   background: #e8f2f6;
   color: #006884;
@@ -784,5 +750,39 @@
   .compile-options {
     align-items: stretch;
     flex-direction: column;
+  }
+}
+
+.workspace-view-modes {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+}
+.workspace-view-modes .file-icon-button {
+  width: 32px;
+  min-width: 32px;
+  min-height: 30px;
+  padding: 5px;
+}
+.workspace-view-modes .file-icon-button[aria-pressed='true'] {
+  color: var(--color-primary);
+  background: #e8f2f6;
+}
+.mobile-files-modal .file-add-menu-host.drawer-add {
+  position: absolute;
+  top: 8px;
+  right: 52px;
+}
+@media (max-width: 720px) {
+  .workspace-view-modes .file-icon-button {
+    width: 40px;
+    min-width: 40px;
+    min-height: 40px;
+  }
+  .mobile-files-modal .file-add-menu-host.drawer-add {
+    top: 6px;
   }
 }

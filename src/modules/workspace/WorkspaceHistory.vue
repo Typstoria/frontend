@@ -147,13 +147,6 @@ async function loadPage(cursor?: number, append = false) {
 }
 
 async function select(id: number) {
-  if (id === props.headId) {
-    selectedId.value = null;
-    diff.value = null;
-    snapshot.value = null;
-    snapshotOpen.value = false;
-    return;
-  }
   selectedId.value = id;
   if (isMobile.value) void nextTick(() => detailBack.value?.focus({ preventScroll: true }));
   snapshotController?.abort();
@@ -170,6 +163,7 @@ async function select(id: number) {
   diffError.value = '';
   expandedFiles.value = new Set();
   expandedContext.value = false;
+  if (id === props.headId) return;
   try {
     const [result, fromState, toState] = await Promise.all([
       api.diff(props.projectId, id, props.headId, controller.signal),
@@ -391,7 +385,7 @@ onBeforeUnmount(() => {
               'history-revision-current': revision.id === props.headId,
             }"
             :aria-current="revision.id === selectedId ? 'true' : undefined"
-            :disabled="revision.id === props.headId || loading"
+            :disabled="loading"
             @click="select(revision.id)"
           >
             <span class="history-revision-top"
@@ -426,7 +420,13 @@ onBeforeUnmount(() => {
         </button>
         <header class="history-detail-heading">
           <div>
-            <h2>Версія {{ selected.number }} → Поточна</h2>
+            <h2>
+              {{
+                selected.id === props.headId
+                  ? `Версія ${selected.number}`
+                  : `Версія ${selected.number} → Поточна`
+              }}
+            </h2>
             <p>{{ dateLabel(selected.createdAt) }} · {{ revisionTitle(selected) }}</p>
           </div>
           <div class="history-detail-actions">
@@ -439,6 +439,7 @@ onBeforeUnmount(() => {
               {{ snapshotOpen ? 'До порівняння' : 'Файли версії' }}
             </button>
             <button
+              v-if="selected.id !== props.headId"
               class="button button-secondary history-restore-button"
               :disabled="!canConfirmRestore"
               @click="restoreOpen = true"
@@ -531,7 +532,8 @@ onBeforeUnmount(() => {
           </section>
         </div>
         <template v-else>
-          <div v-if="diffError" class="history-state" role="alert">
+          <p v-if="selected.id === props.headId" class="history-state">У цих версіях немає змін.</p>
+          <div v-else-if="diffError" class="history-state" role="alert">
             <p>{{ diffError }}</p>
             <button class="button button-secondary" @click="select(selected.id)">
               Повторити порівняння
@@ -721,9 +723,6 @@ onBeforeUnmount(() => {
 .history-revision-selected {
   background: #e8f2f6;
   border-left-color: var(--color-primary);
-}
-.history-revision-current {
-  cursor: default;
 }
 .history-revision-top {
   display: flex;

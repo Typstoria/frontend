@@ -256,7 +256,8 @@ async function hideFiles(page: Page) {
 
 async function openNewFileDialog(page: Page) {
   await showFiles(page);
-  await page.getByRole('button', { name: 'Новий файл', exact: true }).click();
+  await page.getByRole('button', { name: 'Додати файл', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Створити файл', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Новий файл', exact: true })).toBeVisible();
 }
 

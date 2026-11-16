@@ -217,9 +217,9 @@ test('saves the draft before compiling and shows a protected, paginated PDF', as
   await page.getByRole('button', { name: 'Завантажити PDF' }).click();
   expect(await readFile((await (await downloaded).path())!)).toEqual(pdf);
   const singlePanel = !(await editor.isVisible());
-  if (singlePanel) await page.getByRole('button', { name: 'Редактор', exact: true }).click();
+  if (singlePanel) await page.getByRole('button', { name: 'Лише код', exact: true }).click();
   await editor.fill('Unsaved edits');
-  const result = page.getByRole('button', { name: 'Результат', exact: true });
+  const result = page.getByRole('button', { name: 'Лише PDF', exact: true });
   if ((await result.getAttribute('aria-pressed')) === 'false') await result.click();
   await expect(page.getByText(/PDF версії 2/)).toBeVisible();
   if (singlePanel)
@@ -417,7 +417,7 @@ test('retries an ambiguous restore with the same key and reloads cached source',
     requests[0],
   ]);
   expect(requests[0]?.key).toBeTruthy();
-  await page.getByRole('link', { name: 'Редактор', exact: true }).click();
+  await page.getByRole('link', { name: 'Повернутися до редактора', exact: true }).click();
   await expect(editor).toContainText('Original');
   expect(server.saveCount).toBe(0);
 });
