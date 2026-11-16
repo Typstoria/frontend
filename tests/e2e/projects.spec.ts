@@ -27,7 +27,7 @@ const created = {
 const error = (code = 'INTERNAL_ERROR') => ({
   error: { code, message: 'internal stack trace details', requestId: 'private-request-123' },
 });
-const rows = (page: Page) => page.locator('.project-row');
+const rows = (page: Page) => page.locator('.project-card');
 
 async function signIn(page: Page) {
   await page.goto('/auth/login');

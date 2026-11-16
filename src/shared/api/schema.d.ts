@@ -1,14 +1,49 @@
 /** Generated TypeScript types from backend OpenAPI. Run npm run api:types; do not edit manually. */
 export interface paths {
-  '/health/live': {
+  '/api/access/tokens': {
     parameters: {
       query?: never;
       header?: never;
       path?: never;
       cookie?: never;
     };
-    /** Check whether the API process is running. */
-    get: operations['HealthController_live'];
+    /** List PAT metadata. Secrets are never returned. */
+    get: operations['AccessController_tokens'];
+    put?: never;
+    /** Create a project-scoped MCP token. Copy the secret from this response; it is shown once. */
+    post: operations['AccessController_create'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/access/tokens/{id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /** Revoke a PAT. It stops working on the next MCP request. */
+    delete: operations['AccessController_revokeToken'];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/access/connections': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List authorized OAuth clients and their granted projects and scopes. */
+    get: operations['AccessController_connections'];
     put?: never;
     post?: never;
     delete?: never;
@@ -17,18 +52,18 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  '/health/ready': {
+  '/api/access/connections/{id}': {
     parameters: {
       query?: never;
       header?: never;
       path?: never;
       cookie?: never;
     };
-    /** Check whether PostgreSQL is reachable. */
-    get: operations['HealthController_ready'];
+    get?: never;
     put?: never;
     post?: never;
-    delete?: never;
+    /** Revoke an OAuth connection, including all access and refresh tokens. */
+    delete: operations['AccessController_revokeConnection'];
     options?: never;
     head?: never;
     patch?: never;
@@ -344,6 +379,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/projects/{projectId}/preview': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** First page of the latest successful accepted document, outside the project tree. */
+    get: operations['ProjectResourcesController_preview'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/projects/{projectId}/uploads': {
     parameters: {
       query?: never;
@@ -480,6 +532,228 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/projects/{projectId}/proposals': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Список пропозицій проєкту
+     * @description Новіші ID першими; nextCursor передається як cursor наступної сторінки. isStale означає, що основний документ уже змінився відносно бази пропозиції.
+     */
+    get: operations['ProposalsController_list'];
+    put?: never;
+    /**
+     * Створити пропозицію змін без зміни основного документа
+     * @description Візьміть baseRevisionId та fileId з /state. Operations мають той самий формат, що /changes. Зберігається окремий незмінний candidate; пропозиція діє 7 днів. Далі перегляньте /candidate і /diff, виконайте /validate та /accept або /reject. До 50 активних пропозицій на проєкт.
+     */
+    post: operations['ProposalsController_create'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/projects/{projectId}/proposals/{proposalId}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Стан і поточна версія пропозиції
+     * @description version потрібна як expectedProposalVersion. candidateManifestHash фіксує точний стан для прийняття. latestValidationId стосується лише поточної candidate version; acceptedRevisionId заповнюється після прийняття.
+     */
+    get: operations['ProposalsController_get'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    /**
+     * Замінити набір змін і створити нову candidate version
+     * @description Передайте expectedProposalVersion, operations і необов’язковий summary. Весь operations застосовується заново до початкової baseRevisionId, а не до попереднього candidate. Стара validation не підходить новій версії. Максимум 100 версій.
+     */
+    patch: operations['ProposalsController_update'];
+    trace?: never;
+  };
+  '/api/projects/{projectId}/proposals/{proposalId}/rebase': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Перебудувати пропозицію на актуальній ревізії
+     * @description Прочитайте свіжий /state, узгодьте зміни й передайте нову baseRevisionId, expectedProposalVersion та повний operations. Автоматичного merge немає. Створюється нова candidate version, яку потрібно перевірити заново.
+     */
+    post: operations['ProposalsController_rebase'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/projects/{projectId}/proposals/{proposalId}/candidate': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Дерево файлів, entrypoint і контекст пропозиції
+     * @description Без candidateVersion читається остання версія. ID candidateSnapshotId не можна передавати замість revisionId в accepted-document endpoints.
+     */
+    get: operations['ProposalsController_state'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/projects/{projectId}/proposals/{proposalId}/files/{fileId}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Текст файла із candidate, включно з новими файлами */
+    get: operations['ProposalsController_file'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/projects/{projectId}/proposals/{proposalId}/files/{fileId}/download': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Скачати текстовий або бінарний файл із candidate */
+    get: operations['ProposalsController_download'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/projects/{projectId}/proposals/{proposalId}/diff': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Diff від базової ревізії до candidate
+     * @description files містить зміни всіх файлів, context — окремого контексту, entrypoint — головного файла. Ліміти текстових patches такі самі, як у revision diff.
+     */
+    get: operations['ProposalsController_diff'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/projects/{projectId}/proposals/{proposalId}/validate': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Перевірити точну версію пропозиції та створити preview PDF
+     * @description Передайте expectedProposalVersion. Для зміни файлів/entrypoint повертається compileJobId: опитуйте /validations/{validationId}, а PDF завантажуйте через /compilations/{compileJobId}/pdf. Для context-only/no-op результат not_required і job не створюється. Основний документ не змінюється.
+     */
+    post: operations['ProposalsController_validate'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/projects/{projectId}/proposals/{proposalId}/validations/{validationId}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Результат перевірки: pending робота, PDF або Typst diagnostics
+     * @description queued/running — зачекайте; succeeded/not_required — можна приймати; compile_failed — Typst error, потрібне явне підтвердження; validation_failed — infrastructure/timeout/limits, прийняття заборонене.
+     */
+    get: operations['ProposalsController_validation'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/projects/{projectId}/proposals/{proposalId}/accept': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Прийняти перевірену пропозицію як нову ревізію
+     * @description Лише вебсесія власника. Передайте baseRevisionId, expectedProposalVersion, validationId та candidateManifestHash саме переглянутого стану. Якщо база змінилася — 409 REVISION_CONFLICT. acknowledgeCompileFailure=true дозволяє лише явно прийняти фактичний TYPST_ERROR; інші збої та неперевірені зміни не пропускає. No-op не створює зайвої ревізії. Повтор ключа з тим самим payload повертає той самий результат.
+     */
+    post: operations['ProposalsController_accept'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/projects/{projectId}/proposals/{proposalId}/reject': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Відхилити поточну версію пропозиції
+     * @description Лише вебсесія власника. Передайте expectedProposalVersion. Основний документ та його історія залишаються без змін; закриту пропозицію більше не можна редагувати чи прийняти.
+     */
+    post: operations['ProposalsController_reject'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/projects/{projectId}/compilations': {
     parameters: {
       query?: never;
@@ -531,35 +805,141 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/health/live': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Check whether the API process is running. */
+    get: operations['HealthController_live'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/health/ready': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Check whether PostgreSQL is reachable. */
+    get: operations['HealthController_ready'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
 }
 export type webhooks = Record<string, never>;
 export interface components {
   schemas: {
-    LiveHealthDto: {
-      /** Format: date-time */
-      timestamp: string;
+    CreatePatDto: {
+      /** @example Local MCP client */
+      name: string;
       /**
-       * @description API process status.
-       * @enum {string}
+       * @description Only these active projects will be accessible to this token.
+       * @example [
+       *       1
+       *     ]
        */
-      status: 'ok';
+      projectIds: number[];
+      /**
+       * @example [
+       *       "projects:read",
+       *       "documents:read"
+       *     ]
+       */
+      scopes: (
+        | 'projects:read'
+        | 'documents:read'
+        | 'context:read'
+        | 'history:read'
+        | 'changes:read'
+        | 'changes:propose'
+        | 'uploads:stage'
+        | 'compile:run'
+        | 'compile:read'
+      )[];
+      /** @default 30 */
+      expiresInDays: number;
     };
-    DatabaseCheckDto: {
+    CreatedPatDto: {
       /**
-       * @description PostgreSQL connection status.
-       * @enum {string}
+       * Format: int32
+       * @example 1
        */
-      database: 'up';
-    };
-    ReadyHealthDto: {
+      id: number;
+      scopes: (
+        | 'projects:read'
+        | 'documents:read'
+        | 'context:read'
+        | 'history:read'
+        | 'changes:read'
+        | 'changes:propose'
+        | 'uploads:stage'
+        | 'compile:run'
+        | 'compile:read'
+      )[];
+      projectIds: number[];
+      clientId: string | null;
+      /** @enum {string} */
+      status: 'active' | 'expired' | 'revoked';
       /** Format: date-time */
-      timestamp: string;
+      createdAt: string;
+      /** Format: date-time */
+      expiresAt: string;
+      /** Format: date-time */
+      revokedAt: string | null;
+      /** @description Copy now; this secret cannot be retrieved again. Use it only with /mcp. */
+      token: string;
+      name: string;
+    };
+    AccessGrantDto: {
       /**
-       * @description API process status.
-       * @enum {string}
+       * Format: int32
+       * @example 1
        */
-      status: 'ok';
-      checks: components['schemas']['DatabaseCheckDto'];
+      id: number;
+      scopes: (
+        | 'projects:read'
+        | 'documents:read'
+        | 'context:read'
+        | 'history:read'
+        | 'changes:read'
+        | 'changes:propose'
+        | 'uploads:stage'
+        | 'compile:run'
+        | 'compile:read'
+      )[];
+      projectIds: number[];
+      clientId: string | null;
+      /** @enum {string} */
+      status: 'active' | 'expired' | 'revoked';
+      /** Format: date-time */
+      createdAt: string;
+      /** Format: date-time */
+      expiresAt: string;
+      /** Format: date-time */
+      revokedAt: string | null;
+      name: string;
+    };
+    AccessGrantListDto: {
+      /**
+       * Format: int32
+       * @example 1
+       */
+      nextCursor: number | null;
+      items: components['schemas']['AccessGrantDto'][];
     };
     ErrorBodyDto: {
       details?: {
@@ -826,7 +1206,7 @@ export interface components {
        * @description Git processing is asynchronous; query revision history for its current status.
        * @enum {string}
        */
-      historySyncStatus: 'ready' | 'pending' | 'failed';
+      historySyncStatus: 'pending' | 'ready' | 'failed';
     };
     CreateProjectDto: {
       /**
@@ -857,9 +1237,18 @@ export interface components {
        * @description Git processing is asynchronous; query revision history for its current status.
        * @enum {string}
        */
-      historySyncStatus: 'ready' | 'pending' | 'failed';
+      historySyncStatus: 'pending' | 'ready' | 'failed';
+    };
+    ProjectPreviewDto: {
+      /**
+       * Format: int32
+       * @example 1
+       */
+      revisionId: number;
+      version: string;
     };
     ProjectDto: {
+      preview?: components['schemas']['ProjectPreviewDto'] | null;
       /**
        * Format: int32
        * @example 1
@@ -972,7 +1361,7 @@ export interface components {
       /** Format: date-time */
       expiresAt: string;
       /** @enum {string} */
-      status: 'available' | 'expired';
+      status: 'expired' | 'available';
     };
     RevisionDetailsDto: {
       /** @enum {string} */
@@ -1003,9 +1392,9 @@ export interface components {
       /** @enum {string|null} */
       historyErrorCode:
         | 'STORAGE_UNAVAILABLE'
+        | 'WORKER_LOST'
         | 'GIT_UNAVAILABLE'
         | 'GIT_DIVERGED'
-        | 'WORKER_LOST'
         | 'MANIFEST_MISMATCH'
         | null;
       /** @enum {string} */
@@ -1122,7 +1511,7 @@ export interface components {
        * @description Git processing is asynchronous; query revision history for its current status.
        * @enum {string}
        */
-      historySyncStatus: 'ready' | 'pending' | 'failed';
+      historySyncStatus: 'pending' | 'ready' | 'failed';
     };
     HistoryRetryDto: {
       /**
@@ -1132,12 +1521,203 @@ export interface components {
       projectId: number;
       resetCount: number;
     };
-    CreateCompilationDto: {
+    CreateProposalDto: {
       /**
        * Format: int32
        * @example 1
        */
-      revisionId: number;
+      baseRevisionId: number;
+      /**
+       * @description Optional summary recorded with the accepted revision.
+       * @example Оновлено вступ документа
+       */
+      summary?: string;
+      operations: (
+        | components['schemas']['AttachFileDto']
+        | components['schemas']['ReplaceFileDto']
+        | components['schemas']['CreateTextFileDto']
+        | components['schemas']['UpdateTextDto']
+        | components['schemas']['RenameFileDto']
+        | components['schemas']['DeleteFileDto']
+        | components['schemas']['SetEntrypointDto']
+        | components['schemas']['UpdateContextDto']
+      )[];
+    };
+    ProposalDto: {
+      /**
+       * Format: int32
+       * @example 1
+       */
+      id: number;
+      /**
+       * Format: int32
+       * @example 1
+       */
+      projectId: number;
+      /**
+       * Format: int32
+       * @example 1
+       */
+      creatorId: number;
+      /** @enum {string} */
+      status: 'draft' | 'accepted' | 'rejected' | 'expired';
+      /**
+       * Format: int32
+       * @example 1
+       */
+      baseRevisionId: number;
+      /**
+       * Format: int32
+       * @example 1
+       */
+      candidateSnapshotId: number;
+      /**
+       * Format: int32
+       * @example 1
+       */
+      acceptedRevisionId: number | null;
+      /**
+       * Format: int32
+       * @example 1
+       */
+      latestValidationId: number | null;
+      /** Format: date-time */
+      createdAt: string;
+      /** Format: date-time */
+      expiresAt: string;
+      /** @enum {string} */
+      channel: 'web' | 'mcp';
+      version: number;
+      candidateManifestHash: string;
+      summary: string;
+      /** @description The main document no longer matches this candidate's base. Rebase before acceptance. */
+      isStale: boolean;
+    };
+    ProposalListDto: {
+      /**
+       * Format: int32
+       * @example 1
+       */
+      nextCursor: number | null;
+      items: components['schemas']['ProposalDto'][];
+    };
+    UpdateProposalDto: {
+      /**
+       * @description Optional summary recorded with the accepted revision.
+       * @example Оновлено вступ документа
+       */
+      summary?: string;
+      operations: (
+        | components['schemas']['AttachFileDto']
+        | components['schemas']['ReplaceFileDto']
+        | components['schemas']['CreateTextFileDto']
+        | components['schemas']['UpdateTextDto']
+        | components['schemas']['RenameFileDto']
+        | components['schemas']['DeleteFileDto']
+        | components['schemas']['SetEntrypointDto']
+        | components['schemas']['UpdateContextDto']
+      )[];
+      /** @example 1 */
+      expectedProposalVersion: number;
+    };
+    RebaseProposalDto: {
+      /**
+       * Format: int32
+       * @example 1
+       */
+      baseRevisionId: number;
+      /**
+       * @description Optional summary recorded with the accepted revision.
+       * @example Оновлено вступ документа
+       */
+      summary?: string;
+      operations: (
+        | components['schemas']['AttachFileDto']
+        | components['schemas']['ReplaceFileDto']
+        | components['schemas']['CreateTextFileDto']
+        | components['schemas']['UpdateTextDto']
+        | components['schemas']['RenameFileDto']
+        | components['schemas']['DeleteFileDto']
+        | components['schemas']['SetEntrypointDto']
+        | components['schemas']['UpdateContextDto']
+      )[];
+      /** @example 1 */
+      expectedProposalVersion: number;
+    };
+    ProposalCandidateDto: {
+      operations: (
+        | components['schemas']['AttachFileDto']
+        | components['schemas']['ReplaceFileDto']
+        | components['schemas']['CreateTextFileDto']
+        | components['schemas']['UpdateTextDto']
+        | components['schemas']['RenameFileDto']
+        | components['schemas']['DeleteFileDto']
+        | components['schemas']['SetEntrypointDto']
+        | components['schemas']['UpdateContextDto']
+      )[];
+      /**
+       * Format: int32
+       * @example 1
+       */
+      proposalId: number;
+      /**
+       * Format: int32
+       * @example 1
+       */
+      baseRevisionId: number;
+      /**
+       * Format: int32
+       * @example 1
+       */
+      candidateSnapshotId: number;
+      /**
+       * Format: int32
+       * @example 1
+       */
+      mainFileId: number;
+      candidateVersion: number;
+      candidateManifestHash: string;
+      contextText: string;
+      tree: components['schemas']['ProjectFileDto'][];
+    };
+    ProposalTextFileDto: {
+      /**
+       * Format: int32
+       * @example 1
+       */
+      fileId: number;
+      path: string;
+      /** @enum {string} */
+      contentKind: 'binary' | 'text';
+      sha256: string;
+      sizeBytes: number;
+      mediaType: string;
+      candidateVersion: number;
+      content: string;
+    };
+    ProposalDiffDto: {
+      files: components['schemas']['FileDiffDto'][];
+      context: components['schemas']['ContextDiffDto'];
+      entrypoint: components['schemas']['EntrypointDiffDto'];
+      /**
+       * Format: int32
+       * @example 1
+       */
+      baseRevisionId: number;
+      /**
+       * Format: int32
+       * @example 1
+       */
+      proposalId: number;
+      candidateVersion: number;
+      candidateManifestHash: string;
+    };
+    ProposalVersionDto: {
+      /**
+       * @description Version returned by GET proposal; protects against overwriting a newer candidate.
+       * @example 1
+       */
+      expectedProposalVersion: number;
     };
     CompileDiagnosticDto: {
       /**
@@ -1154,6 +1734,100 @@ export interface components {
       /** @enum {string} */
       severity: 'error' | 'warning';
     };
+    ProposalValidationDto: {
+      /**
+       * Format: int32
+       * @example 1
+       */
+      id: number;
+      /**
+       * Format: int32
+       * @example 1
+       */
+      proposalId: number;
+      /** @enum {string} */
+      status:
+        | 'not_required'
+        | 'queued'
+        | 'running'
+        | 'succeeded'
+        | 'compile_failed'
+        | 'validation_failed';
+      /**
+       * Format: int32
+       * @example 1
+       */
+      compileJobId: number | null;
+      errorCode: string | null;
+      /** Format: date-time */
+      createdAt: string;
+      candidateVersion: number;
+      candidateManifestHash: string;
+      diagnostics: components['schemas']['CompileDiagnosticDto'][];
+    };
+    AcceptProposalDto: {
+      /**
+       * @description Version returned by GET proposal; protects against overwriting a newer candidate.
+       * @example 1
+       */
+      expectedProposalVersion: number;
+      /**
+       * Format: int32
+       * @example 1
+       */
+      baseRevisionId: number;
+      /**
+       * Format: int32
+       * @example 1
+       */
+      validationId: number;
+      /**
+       * @description Copy from the candidate being reviewed; accepting a different hash is forbidden.
+       * @example aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+       */
+      candidateManifestHash: string;
+      /**
+       * @description Only acknowledges an actual Typst error; never bypasses missing validation or infrastructure failure.
+       * @default false
+       */
+      acknowledgeCompileFailure: boolean;
+    };
+    ProposalAcceptedDto: {
+      /**
+       * Format: int32
+       * @example 1
+       */
+      projectId: number;
+      /**
+       * Format: int32
+       * @example 1
+       */
+      revisionId: number;
+      /**
+       * Format: int32
+       * @example 1
+       */
+      mainFileId: number;
+      /**
+       * Format: int32
+       * @example 1
+       */
+      proposalId: number;
+      revisionNumber: number;
+      manifestHash: string;
+      /**
+       * @description Git processing is asynchronous; query revision history for its current status.
+       * @enum {string}
+       */
+      historySyncStatus: 'pending' | 'ready' | 'failed';
+    };
+    CreateCompilationDto: {
+      /**
+       * Format: int32
+       * @example 1
+       */
+      revisionId: number;
+    };
     CompilationDto: {
       /**
        * Format: int32
@@ -1167,22 +1841,34 @@ export interface components {
       projectId: number;
       /**
        * Format: int32
+       * @description Accepted revision ID; null for proposal previews.
        * @example 1
        */
-      revisionId: number;
+      revisionId: number | null;
+      /**
+       * Format: int32
+       * @example 1
+       */
+      proposalId: number | null;
+      candidateVersion: number | null;
+      /**
+       * Format: int32
+       * @example 1
+       */
+      candidateSnapshotId: number | null;
       /** @enum {string} */
       status: 'queued' | 'running' | 'succeeded' | 'failed' | 'timed_out' | 'cancelled';
       /** @enum {string|null} */
       errorCode:
-        | 'STORAGE_UNAVAILABLE'
-        | 'WORKER_LOST'
         | 'TYPST_ERROR'
         | 'DEPENDENCY_UNAVAILABLE'
         | 'RUNNER_UNAVAILABLE'
+        | 'STORAGE_UNAVAILABLE'
         | 'OUTPUT_LIMIT'
         | 'RESOURCE_LIMIT'
         | 'INTERNAL_ERROR'
         | 'ACCESS_REVOKED'
+        | 'WORKER_LOST'
         | null;
       /** @example aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa */
       inputManifestHash: string;
@@ -1200,6 +1886,32 @@ export interface components {
       artifactAvailable: boolean;
       diagnostics: components['schemas']['CompileDiagnosticDto'][];
     };
+    LiveHealthDto: {
+      /** Format: date-time */
+      timestamp: string;
+      /**
+       * @description API process status.
+       * @enum {string}
+       */
+      status: 'ok';
+    };
+    DatabaseCheckDto: {
+      /**
+       * @description PostgreSQL connection status.
+       * @enum {string}
+       */
+      database: 'up';
+    };
+    ReadyHealthDto: {
+      /** Format: date-time */
+      timestamp: string;
+      /**
+       * @description API process status.
+       * @enum {string}
+       */
+      status: 'ok';
+      checks: components['schemas']['DatabaseCheckDto'];
+    };
   };
   responses: never;
   parameters: never;
@@ -1209,9 +1921,14 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
-  HealthController_live: {
+  AccessController_tokens: {
     parameters: {
-      query?: never;
+      query?: {
+        /** @description Last project ID from the previous page; projects are ordered by ID descending. */
+        cursor?: number;
+        /** @description Number of projects per page. */
+        limit?: number;
+      };
       header?: never;
       path?: never;
       cookie?: never;
@@ -1223,14 +1940,73 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['LiveHealthDto'];
+          'application/json': components['schemas']['AccessGrantListDto'];
         };
       };
     };
   };
-  HealthController_ready: {
+  AccessController_create: {
     parameters: {
       query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['CreatePatDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['CreatedPatDto'];
+        };
+      };
+      /** @description A selected project does not belong to this account or was deleted. */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Rate limit or active credential limit. */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  AccessController_revokeToken: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  AccessController_connections: {
+    parameters: {
+      query?: {
+        /** @description Last project ID from the previous page; projects are ordered by ID descending. */
+        cursor?: number;
+        /** @description Number of projects per page. */
+        limit?: number;
+      };
       header?: never;
       path?: never;
       cookie?: never;
@@ -1242,16 +2018,25 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ReadyHealthDto'];
+          'application/json': components['schemas']['AccessGrantListDto'];
         };
       };
-      503: {
+    };
+  };
+  AccessController_revokeConnection: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      204: {
         headers: {
           [name: string]: unknown;
         };
-        content: {
-          'application/json': components['schemas']['ErrorResponseDto'];
-        };
+        content?: never;
       };
     };
   };
@@ -2509,6 +3294,69 @@ export interface operations {
       };
     };
   };
+  ProjectResourcesController_preview: {
+    parameters: {
+      query?: {
+        version?: string;
+      };
+      header?: never;
+      path: {
+        projectId: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'image/png': string;
+        };
+      };
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+    };
+  };
   ProjectResourcesController_upload: {
     parameters: {
       query?: never;
@@ -3068,6 +3916,1272 @@ export interface operations {
       };
     };
   };
+  ProposalsController_list: {
+    parameters: {
+      query?: {
+        /** @description Last project ID from the previous page; projects are ordered by ID descending. */
+        cursor?: number;
+        /** @description Number of projects per page. */
+        limit?: number;
+      };
+      header?: never;
+      path: {
+        projectId: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ProposalListDto'];
+        };
+      };
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+    };
+  };
+  ProposalsController_create: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        projectId: number;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['CreateProposalDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ProposalDto'];
+        };
+      };
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+    };
+  };
+  ProposalsController_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        proposalId: number;
+        projectId: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ProposalDto'];
+        };
+      };
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+    };
+  };
+  ProposalsController_update: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        proposalId: number;
+        projectId: number;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['UpdateProposalDto'];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ProposalDto'];
+        };
+      };
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+    };
+  };
+  ProposalsController_rebase: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        proposalId: number;
+        projectId: number;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['RebaseProposalDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ProposalDto'];
+        };
+      };
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+    };
+  };
+  ProposalsController_state: {
+    parameters: {
+      query?: {
+        /** @description Omit to read the latest candidate; older immutable versions remain readable. */
+        candidateVersion?: number;
+      };
+      header?: never;
+      path: {
+        proposalId: number;
+        projectId: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ProposalCandidateDto'];
+        };
+      };
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+    };
+  };
+  ProposalsController_file: {
+    parameters: {
+      query?: {
+        /** @description Omit to read the latest candidate; older immutable versions remain readable. */
+        candidateVersion?: number;
+      };
+      header?: never;
+      path: {
+        fileId: number;
+        proposalId: number;
+        projectId: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ProposalTextFileDto'];
+        };
+      };
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+    };
+  };
+  ProposalsController_download: {
+    parameters: {
+      query?: {
+        /** @description Omit to read the latest candidate; older immutable versions remain readable. */
+        candidateVersion?: number;
+      };
+      header?: never;
+      path: {
+        fileId: number;
+        proposalId: number;
+        projectId: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/octet-stream': string;
+        };
+      };
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+    };
+  };
+  ProposalsController_diff: {
+    parameters: {
+      query?: {
+        /** @description Omit to read the latest candidate; older immutable versions remain readable. */
+        candidateVersion?: number;
+      };
+      header?: never;
+      path: {
+        proposalId: number;
+        projectId: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ProposalDiffDto'];
+        };
+      };
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+    };
+  };
+  ProposalsController_validate: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        proposalId: number;
+        projectId: number;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['ProposalVersionDto'];
+      };
+    };
+    responses: {
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ProposalValidationDto'];
+        };
+      };
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+    };
+  };
+  ProposalsController_validation: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        validationId: number;
+        proposalId: number;
+        projectId: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ProposalValidationDto'];
+        };
+      };
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+    };
+  };
+  ProposalsController_accept: {
+    parameters: {
+      query?: never;
+      header: {
+        'Idempotency-Key': string;
+      };
+      path: {
+        proposalId: number;
+        projectId: number;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['AcceptProposalDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ProposalAcceptedDto'];
+        };
+      };
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+    };
+  };
+  ProposalsController_reject: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        proposalId: number;
+        projectId: number;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['ProposalVersionDto'];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ProposalDto'];
+        };
+      };
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+    };
+  };
   CompilationsController_create: {
     parameters: {
       query?: never;
@@ -3277,6 +5391,52 @@ export interface operations {
         };
         content: {
           'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorResponseDto'];
+        };
+      };
+    };
+  };
+  HealthController_live: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['LiveHealthDto'];
+        };
+      };
+    };
+  };
+  HealthController_ready: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ReadyHealthDto'];
         };
       };
       503: {

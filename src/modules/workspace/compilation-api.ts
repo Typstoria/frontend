@@ -2,7 +2,8 @@ import { ApiError, type RequestOptions } from '../../shared/api/client';
 import type { components } from '../../shared/api/schema';
 import { validId } from './workspace-api';
 
-export type Compilation = components['schemas']['CompilationDto'];
+// This workspace compiles accepted revisions; proposal previews use a separate flow.
+export type Compilation = components['schemas']['CompilationDto'] & { revisionId: number };
 export type Diagnostic = components['schemas']['CompileDiagnosticDto'];
 type Request = (path: string, options?: Omit<RequestOptions, 'accessToken'>) => Promise<unknown>;
 const statuses = ['queued', 'running', 'succeeded', 'failed', 'timed_out', 'cancelled'];

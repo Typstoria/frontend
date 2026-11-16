@@ -6,6 +6,8 @@ import ModalDialog from '../../shared/ui/ModalDialog.vue';
 import { identitySession } from '../identity/identity-session';
 import { createProjectsApi, titleError } from './projects-api';
 import type { Project } from './projects-api';
+import ProjectPreview from './ProjectPreview.vue';
+import './projects.css';
 
 type Dialog = { kind: 'create' } | { kind: 'rename' | 'delete'; project: Project };
 const api = createProjectsApi(identitySession.request);
@@ -17,6 +19,7 @@ const loading = ref<'reset' | 'more' | null>(null);
 const listError = ref('');
 const notice = ref('');
 const activeActions = ref<number | null>(null);
+const actionMenuLeft = ref(false);
 const dialog = ref<Dialog | null>(null);
 const dialogOpen = ref(false);
 const title = ref('');
@@ -63,6 +66,9 @@ async function toggleActions(projectId: number) {
   activeActions.value = activeActions.value === projectId ? null : projectId;
   if (activeActions.value !== null) {
     await nextTick();
+    const button = document.getElementById(`project-action-button-${projectId}`);
+    const card = button?.closest('.project-card');
+    actionMenuLeft.value = card ? card.getBoundingClientRect().right - 190 < 8 : false;
     document.getElementById(`project-actions-${projectId}`)?.querySelector('button')?.focus();
   }
 }
@@ -213,19 +219,20 @@ onBeforeUnmount(() => {
       <button class="text-button" :disabled="!!loading" @click="load(failedLoad)">Повторити</button>
     </div>
 
-    <ul
-      v-if="projects.length"
-      class="project-list panel"
-      aria-label="Проєкти"
-      :aria-busy="!!loading"
-    >
-      <li v-for="project in projects" :key="project.id" class="project-row">
+    <ul v-if="projects.length" class="project-list" aria-label="Проєкти" :aria-busy="!!loading">
+      <li v-for="project in projects" :key="project.id" class="project-card">
         <RouterLink
           class="project-info"
           :to="`/projects/${project.id}`"
           :aria-label="project.title"
           :aria-describedby="`project-updated-${project.id}`"
         >
+          <ProjectPreview
+            :key="`${project.id}:${project.preview?.version ?? 'blank'}`"
+            :project-id="project.id"
+            :version="project.preview?.version ?? null"
+            :load="api.preview"
+          />
           <h2>
             {{ project.title }}
           </h2>
@@ -258,6 +265,7 @@ onBeforeUnmount(() => {
             v-if="activeActions === project.id"
             :id="`project-actions-${project.id}`"
             class="project-action-list"
+            :class="{ 'project-action-list-left': actionMenuLeft }"
             role="group"
             :aria-label="`Дії: ${project.title}`"
           >

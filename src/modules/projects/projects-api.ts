@@ -2,8 +2,12 @@ import { ApiError } from '../../shared/api/client';
 import type { RequestOptions } from '../../shared/api/client';
 import type { components } from '../../shared/api/schema';
 
-export type Project = components['schemas']['ProjectDto'];
-export type ProjectList = components['schemas']['ProjectListDto'];
+type ApiProject = components['schemas']['ProjectDto'];
+export type Project = Omit<ApiProject, 'preview'> & {
+  preview: { revisionId: number; version: string } | null;
+};
+type ApiProjectList = components['schemas']['ProjectListDto'];
+export type ProjectList = Omit<ApiProjectList, 'items'> & { items: Project[] };
 export type ProjectCreated = components['schemas']['ProjectCreatedDto'];
 type Request = (path: string, options?: Omit<RequestOptions, 'accessToken'>) => Promise<unknown>;
 
@@ -15,6 +19,18 @@ function id(value: unknown): value is number {
 }
 function date(value: unknown): value is string {
   return typeof value === 'string' && Number.isFinite(Date.parse(value));
+}
+function parsePreview(value: unknown): Project['preview'] {
+  // Older API instances may omit preview while a rolling deployment is in progress.
+  if (value === undefined || value === null) return null;
+  if (
+    !record(value) ||
+    !id(value.revisionId) ||
+    typeof value.version !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(value.version)
+  )
+    invalid();
+  return { revisionId: value.revisionId, version: value.version };
 }
 function invalid(): never {
   throw new ApiError(200, 'INVALID_RESPONSE', 'Некоректна відповідь сервера.', null);
@@ -45,6 +61,7 @@ export function parseProject(value: unknown): Project {
     currentRevisionId: value.currentRevisionId,
     createdAt: value.createdAt,
     updatedAt: value.updatedAt,
+    preview: parsePreview(value.preview),
   };
 }
 
@@ -90,6 +107,45 @@ export function parseProjectCreated(value: unknown): ProjectCreated {
 }
 
 export function createProjectsApi(request: Request) {
+  let activePreviewRequests = 0;
+  const previewWaiters: Array<{
+    signal: AbortSignal;
+    resolve: (release: () => void) => void;
+    reject: (error: unknown) => void;
+    abort: () => void;
+  }> = [];
+  function releasePreviewSlot() {
+    activePreviewRequests--;
+    while (previewWaiters.length) {
+      const next = previewWaiters.shift()!;
+      if (next.signal.aborted) continue;
+      next.signal.removeEventListener('abort', next.abort);
+      activePreviewRequests++;
+      next.resolve(releasePreviewSlot);
+      break;
+    }
+  }
+  async function acquirePreviewSlot(signal: AbortSignal): Promise<() => void> {
+    signal.throwIfAborted();
+    if (activePreviewRequests < 4) {
+      activePreviewRequests++;
+      return releasePreviewSlot;
+    }
+    return new Promise((resolve, reject) => {
+      const waiter = {
+        signal,
+        resolve,
+        reject,
+        abort: () => {
+          const index = previewWaiters.indexOf(waiter);
+          if (index >= 0) previewWaiters.splice(index, 1);
+          reject(signal.reason);
+        },
+      };
+      previewWaiters.push(waiter);
+      signal.addEventListener('abort', waiter.abort, { once: true });
+    });
+  }
   return {
     async list(cursor?: number, signal?: AbortSignal) {
       return parseProjectList(
@@ -107,6 +163,34 @@ export function createProjectsApi(request: Request) {
       );
       if (project.id !== projectId) invalid();
       return project;
+    },
+    async preview(projectId: number, version: string, signal: AbortSignal) {
+      if (!id(projectId) || !/^[a-f0-9]{64}$/.test(version))
+        throw new Error('Invalid project preview request');
+      const release = await acquirePreviewSlot(signal);
+      try {
+        const value = await request(`/projects/${projectId}/preview`, {
+          query: { version },
+          responseType: 'blob',
+          signal,
+        });
+        if (
+          !(value instanceof Blob) ||
+          value.type !== 'image/png' ||
+          value.size === 0 ||
+          value.size > 2 * 1024 * 1024
+        )
+          invalid();
+        const signature = new Uint8Array(await value.slice(0, 8).arrayBuffer());
+        if (
+          signature.length !== 8 ||
+          ![137, 80, 78, 71, 13, 10, 26, 10].every((byte, index) => signature[index] === byte)
+        )
+          invalid();
+        return value;
+      } finally {
+        release();
+      }
     },
     async create(title: string, key: string, signal?: AbortSignal) {
       return parseProjectCreated(
