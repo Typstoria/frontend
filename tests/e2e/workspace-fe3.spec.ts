@@ -53,8 +53,9 @@ function pdfFixture(
   pageCount = 2,
   title = 'Research report',
   firstPageHeight = 700,
+  drawing = '',
 ) {
-  const stream = `BT /F1 18 Tf 20 130 Td (${title}) Tj ET`;
+  const stream = `BT /F1 18 Tf 20 130 Td (${title}) Tj ET ${drawing}`;
   const pageReferences = Array.from({ length: pageCount }, (_, index) => `${index + 3} 0 R`);
   const fontId = pageCount + 3;
   const contentId = pageCount + 4;
@@ -288,7 +289,73 @@ test('renders only nearby pages when scrolling through a long PDF', async ({ pag
   });
   await expect(last.getByLabel('Текст сторінки')).toContainText('Research report');
   await expect(first).toHaveCount(0);
-  expect(await frame.locator('canvas').count()).toBeLessThan(8);
+  expect(await frame.locator('canvas:not(.pdf-detail-tile)').count()).toBeLessThan(8);
+});
+
+test('keeps a zoomed vector sharp and aligned after panning to another part of the page', async ({
+  page,
+}) => {
+  await installWorkspace(page);
+  await page.route('**/api/projects/1/compilations', (route) =>
+    route.fulfill({ status: 202, json: job(100, 'queued') }),
+  );
+  await page.route('**/api/projects/1/compilations/50', (route) =>
+    route.fulfill({ json: job(100, 'succeeded') }),
+  );
+  await page.route('**/api/projects/1/compilations/50/pdf', (route) =>
+    route.fulfill({
+      contentType: 'application/pdf',
+      body: pdfFixture(700, 2, 'Detail sample', 1600, '1 0 0 rg 88 690 34 40 re f'),
+    }),
+  );
+  await page.goto('/projects/1');
+  await page.getByRole('button', { name: 'Скомпілювати', exact: true }).click();
+  const frame = page.locator('.pdf-page-frame');
+  const first = frame.locator('.pdf-page[data-page-number="1"]');
+  await expect(first.getByLabel('Текст сторінки')).toContainText('Detail sample');
+  const zoomIn = page.getByRole('button', { name: 'Збільшити масштаб', exact: true });
+  for (let i = 0; i < 5 && (await zoomIn.isEnabled()); i++) await zoomIn.click();
+  await expect(page.locator('.pdf-zoom-value')).toHaveText('400%');
+
+  // The test mark sits far below the top of page one. Pan to it so only
+  // the tiles near the new viewport can supply the expected red pixel.
+  await first.evaluate((sheet) => {
+    const panel = sheet.closest('.pdf-page-frame')!;
+    const box = sheet.getBoundingClientRect();
+    const panelBox = panel.getBoundingClientRect();
+    panel.scrollLeft += box.left - panelBox.left + box.width * (105 / 200) - panel.clientWidth / 2;
+    panel.scrollTop += box.top - panelBox.top + box.height * (890 / 1600) - panel.clientHeight / 2;
+  });
+  await expect
+    .poll(() =>
+      first.evaluate((sheet) => {
+        const pageBox = sheet.getBoundingClientRect();
+        const markerX = pageBox.left + pageBox.width * (105 / 200);
+        const markerY = pageBox.top + pageBox.height * (890 / 1600);
+        const base = sheet.querySelector<HTMLCanvasElement>('canvas:not(.pdf-detail-tile)');
+        const baseDensity = base ? base.width / Number.parseFloat(base.style.width) : 0;
+        return Array.from(sheet.querySelectorAll<HTMLCanvasElement>('.pdf-detail-tile')).some(
+          (tile) => {
+            const box = tile.getBoundingClientRect();
+            const density = tile.width / box.width;
+            if (density <= baseDensity * 1.05 || tile.width > 768 || tile.height > 768)
+              return false;
+            if (
+              markerX < box.left ||
+              markerX >= box.right ||
+              markerY < box.top ||
+              markerY >= box.bottom
+            )
+              return false;
+            const x = Math.floor((markerX - box.left) * density);
+            const y = Math.floor((markerY - box.top) * density);
+            const pixel = tile.getContext('2d')?.getImageData(x, y, 1, 1).data;
+            return pixel && pixel[0]! > 230 && pixel[1]! < 25 && pixel[2]! < 25;
+          },
+        );
+      }),
+    )
+    .toBe(true);
 });
 
 test('restores horizontal PDF position when returning to split view', async ({ page }) => {

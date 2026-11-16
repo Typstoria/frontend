@@ -20,11 +20,13 @@ import {
   type PdfLayout,
 } from './pdf-layout';
 import { pdfPageSize, releasePdfPageSurface, renderPdfPage } from './pdf-page-surface';
+import { createPdfPageDetails, type PdfDetailPage } from './pdf-page-details';
 
 const props = defineProps<{ pdf: Blob }>();
 const emit = defineEmits<{ displayed: [pdf: Blob] }>();
 type DocumentTask = PDFDocumentLoadingTask;
 type LoadedPdf = { task: DocumentTask; doc: PDFDocumentProxy; sizes: PageSize[]; blob: Blob };
+type PreparedPage = { page: PDFPageProxy; surface: HTMLElement };
 type PageSlot = {
   node: HTMLDivElement;
   surface?: HTMLElement;
@@ -52,6 +54,7 @@ let pending:
   | { controller: AbortController; task?: DocumentTask; pdf?: LoadedPdf; preparing: boolean }
   | undefined;
 const slots = new Map<number, PageSlot>();
+const details = createPdfPageDetails();
 let pageRender: PageRender | undefined;
 let resizeObserver: ResizeObserver | undefined;
 let frameRequest = 0;
@@ -118,6 +121,7 @@ function removeSlot(slot: PageSlot, index: number) {
 }
 
 function clearSlots() {
+  details.clear();
   pageRender?.controller.abort();
   slots.forEach(removeSlot);
   slots.clear();
@@ -130,7 +134,7 @@ function placeSurface(slot: PageSlot, surface: HTMLElement, pageScale: number) {
   slot.scale = pageScale;
 }
 
-function syncPages(prepared?: Map<number, HTMLElement>) {
+function syncPages(prepared?: Map<number, PreparedPage>) {
   const element = frame.value;
   const surface = stack.value;
   const pdf = current;
@@ -152,6 +156,7 @@ function syncPages(prepared?: Map<number, HTMLElement>) {
   }
 
   let nextRender: number | undefined;
+  const detailedPages: PdfDetailPage[] = [];
   for (let index = first; index <= last; index++) {
     const page = geometry.pages[index]!;
     let slot = slots.get(index);
@@ -174,11 +179,27 @@ function syncPages(prepared?: Map<number, HTMLElement>) {
     slot.node.style.height = `${page.height}px`;
     const ready = prepared?.get(index);
     if (ready) {
-      placeSurface(slot, ready, geometry.scale);
+      slot.page = ready.page;
+      placeSurface(slot, ready.surface, geometry.scale);
       prepared?.delete(index);
     }
     if (slot.surface && slot.scale !== geometry.scale)
       slot.surface.style.transform = `scale(${geometry.scale / slot.scale!})`;
+    if (
+      slot.surface &&
+      slot.page &&
+      slot.scale === geometry.scale &&
+      index >= visibleFirst &&
+      index <= visibleLast
+    ) {
+      detailedPages.push({
+        index,
+        bounds: page,
+        scale: geometry.scale,
+        surface: slot.surface,
+        proxy: slot.page,
+      });
+    }
     if (
       slot.scale !== geometry.scale &&
       (nextRender === undefined ||
@@ -186,6 +207,13 @@ function syncPages(prepared?: Map<number, HTMLElement>) {
     )
       nextRender = index;
   }
+
+  details.sync(detailedPages, {
+    left: element.scrollLeft,
+    top,
+    width: element.clientWidth,
+    height: element.clientHeight,
+  });
 
   if (!pageRender && nextRender !== undefined) {
     const index = nextRender;
@@ -237,7 +265,10 @@ function scheduleFrame() {
   frameRequest = requestAnimationFrame(() => {
     frameRequest = 0;
     const size = viewSize();
-    if (!size) return;
+    if (!size) {
+      details.clear();
+      return;
+    }
     if (
       size.width !== viewportWidth ||
       size.height !== viewportHeight ||
@@ -353,10 +384,15 @@ function openFailure(attempt: NonNullable<typeof pending>) {
   error.value = 'Не вдалося відобразити PDF.';
 }
 
+function releasePreparedPage({ page, surface }: PreparedPage) {
+  page.cleanup();
+  releasePdfPageSurface(surface);
+}
+
 // Prepare the actual visible pages while the old document remains interactive.
 async function prepareReplacement(attempt: NonNullable<typeof pending>, pdf: LoadedPdf) {
   attempt.preparing = true;
-  const prepared = new Map<number, HTMLElement>();
+  const prepared = new Map<number, PreparedPage>();
   let stagedLayout: PdfLayout | undefined;
   let stagedWidth = 0;
   let stagedZoom: number | null = null;
@@ -368,7 +404,7 @@ async function prepareReplacement(attempt: NonNullable<typeof pending>, pdf: Loa
       if (!stagedLayout || stagedWidth !== size.width || stagedZoom !== zoom.value) {
         const next = makeLayout(pdf, size);
         if (stagedLayout && stagedLayout.scale !== next.scale) {
-          prepared.forEach(releasePdfPageSurface);
+          prepared.forEach(releasePreparedPage);
           prepared.clear();
         }
         stagedLayout = next;
@@ -380,9 +416,9 @@ async function prepareReplacement(attempt: NonNullable<typeof pending>, pdf: Loa
       const position = scrollForAnchor(next, anchor, point, size);
       const first = pageAt(next, position.y);
       const last = pageAt(next, position.y + size.height);
-      for (const [index, content] of prepared) {
+      for (const [index, preparedPage] of prepared) {
         if (index < first || index > last) {
-          releasePdfPageSurface(content);
+          releasePreparedPage(preparedPage);
           prepared.delete(index);
         }
       }
@@ -392,9 +428,11 @@ async function prepareReplacement(attempt: NonNullable<typeof pending>, pdf: Loa
         const page = await pdf.doc.getPage(missing + 1);
         try {
           signal.throwIfAborted();
-          prepared.set(missing, await renderPdfPage(page, next.scale, signal));
-        } finally {
+          const surface = await renderPdfPage(page, next.scale, signal);
+          prepared.set(missing, { page, surface });
+        } catch (error) {
           page.cleanup();
+          throw error;
         }
         continue;
       }
@@ -417,7 +455,7 @@ async function prepareReplacement(attempt: NonNullable<typeof pending>, pdf: Loa
     if (!signal.aborted) openFailure(attempt);
   } finally {
     attempt.preparing = false;
-    prepared.forEach(releasePdfPageSurface);
+    prepared.forEach(releasePreparedPage);
   }
 }
 
@@ -567,6 +605,10 @@ onBeforeUnmount(() => {
 :deep(.pdf-page canvas) {
   display: block;
   max-width: none;
+}
+:deep(.pdf-detail-tile) {
+  position: absolute;
+  pointer-events: none;
 }
 :deep(.pdf-text-layer) {
   position: absolute;

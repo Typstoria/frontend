@@ -1,8 +1,8 @@
 import { TextLayer, type PDFPageProxy, type RenderTask } from 'pdfjs-dist';
+import { pdfDetailRatio } from './pdf-detail-tile';
 
 const MAX_CANVAS_PIXELS = 2_500_000;
 const MAX_CANVAS_SIDE = 4_096;
-const MAX_DEVICE_PIXEL_RATIO = 2;
 
 export function pdfPageSize(page: PDFPageProxy): { width: number; height: number } {
   const { width, height } = page.getViewport({ scale: 1 });
@@ -12,7 +12,7 @@ export function pdfPageSize(page: PDFPageProxy): { width: number; height: number
 }
 
 function getRasterScale(width: number, height: number): number {
-  const devicePixelRatio = Math.min(window.devicePixelRatio || 1, MAX_DEVICE_PIXEL_RATIO);
+  const devicePixelRatio = pdfDetailRatio();
   let scale = Math.min(
     devicePixelRatio,
     MAX_CANVAS_SIDE / width,
@@ -33,8 +33,7 @@ function getRasterScale(width: number, height: number): number {
 }
 
 function clearSurface(surface: HTMLElement): void {
-  const canvas = surface.querySelector('canvas');
-  if (canvas) {
+  for (const canvas of surface.querySelectorAll('canvas')) {
     canvas.width = 0;
     canvas.height = 0;
   }
@@ -71,6 +70,7 @@ export async function renderPdfPage(
   const canvas = document.createElement('canvas');
   canvas.setAttribute('aria-hidden', 'true');
   const rasterScale = getRasterScale(viewport.width, viewport.height);
+  surface.dataset.rasterScale = String(rasterScale);
   canvas.width = Math.ceil(viewport.width * rasterScale);
   canvas.height = Math.ceil(viewport.height * rasterScale);
   canvas.style.width = `${viewport.width}px`;
