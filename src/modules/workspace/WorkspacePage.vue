@@ -513,10 +513,9 @@ async function openDiagnostic(item: Diagnostic) {
   await nextTick();
   editor.value?.focus();
 }
-function openPdf() {
+function openPdf(artifact: NonNullable<typeof compilation.state.artifact>) {
   pdfOpenError.value = '';
-  const artifact = compilation.state.artifact;
-  if (!artifact || Date.parse(artifact.job.artifactExpiresAt!) <= Date.now()) {
+  if (Date.parse(artifact.job.artifactExpiresAt!) <= Date.now()) {
     pdfOpenError.value = 'PDF більше недоступний. Скомпілюйте документ ще раз.';
     return;
   }
@@ -524,10 +523,12 @@ function openPdf() {
     pdfOpenError.value =
       'Не вдалося відкрити PDF. Дозвольте відкриття нової вкладки й повторіть спробу.';
 }
-function downloadPdf() {
-  const artifact = compilation.state.artifact;
-  if (artifact && Date.parse(artifact.job.artifactExpiresAt!) > Date.now())
-    downloadBlob(artifact.pdf, `document-v${artifact.revision.number}.pdf`);
+function downloadPdf(artifact: NonNullable<typeof compilation.state.artifact>) {
+  if (Date.parse(artifact.job.artifactExpiresAt!) <= Date.now()) {
+    pdfOpenError.value = 'PDF більше недоступний. Скомпілюйте документ ще раз.';
+    return;
+  }
+  downloadBlob(artifact.pdf, `document-v${artifact.revision.number}.pdf`);
 }
 const desktopFilesVisible = ref(true);
 const mobileFilesVisible = ref(false);

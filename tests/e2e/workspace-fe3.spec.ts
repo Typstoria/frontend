@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { expect, test, type Page, type Route } from '@playwright/test';
+import { expect, test, type Locator, type Page, type Route } from '@playwright/test';
 import type { Compilation } from '../../src/modules/workspace/compilation-api';
 import { installWorkspaceStartupMock } from './workspace-startup-fixture';
 
@@ -48,13 +48,25 @@ const job = (
   ...extra,
 });
 
-function pdfFixture(secondPageHeight = 170) {
-  const stream = 'BT /F1 18 Tf 20 130 Td (Research report) Tj ET';
+function pdfFixture(
+  secondPageHeight = 170,
+  pageCount = 2,
+  title = 'Research report',
+  firstPageHeight = 700,
+) {
+  const stream = `BT /F1 18 Tf 20 130 Td (${title}) Tj ET`;
+  const pageReferences = Array.from({ length: pageCount }, (_, index) => `${index + 3} 0 R`);
+  const fontId = pageCount + 3;
+  const contentId = pageCount + 4;
+  const pages = Array.from({ length: pageCount }, (_, index) => {
+    const height = index === 0 ? (pageCount === 1 ? 160 : firstPageHeight) : secondPageHeight;
+    const width = index === 0 ? 200 : 180;
+    return `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${width} ${height}] /Resources << /Font << /F1 ${fontId} 0 R >> >> /Contents ${contentId} 0 R >>`;
+  });
   const objects = [
     '<< /Type /Catalog /Pages 2 0 R >>',
-    '<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>',
-    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 160] /Resources << /Font << /F1 5 0 R >> >> /Contents 6 0 R >>',
-    `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 180 ${secondPageHeight}] /Resources << /Font << /F1 5 0 R >> >> /Contents 6 0 R >>`,
+    `<< /Type /Pages /Kids [${pageReferences.join(' ')}] /Count ${pageCount} >>`,
+    ...pages,
     '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
     `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`,
   ];
@@ -67,6 +79,17 @@ function pdfFixture(secondPageHeight = 170) {
   const xref = pdf.length;
   pdf += `xref\n0 ${offsets.length}\n${offsets.join('')}trailer\n<< /Size ${offsets.length} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
   return Buffer.from(pdf);
+}
+
+async function scrollPageIntoView(frame: Locator, pageNumber: number) {
+  const selector = `.pdf-page[data-page-number="${pageNumber}"]`;
+  await frame.locator(selector).waitFor();
+  await frame.evaluate((element, number) => {
+    const target = element.querySelector<HTMLElement>(`.pdf-page[data-page-number="${number}"]`);
+    if (!target) throw new Error(`PDF page ${number} is not rendered`);
+    const pageTop = target.getBoundingClientRect().top - element.getBoundingClientRect().top;
+    element.scrollTop += pageTop + Math.min(24, target.clientHeight / 10);
+  }, pageNumber);
 }
 
 async function installWorkspace(page: Page, initialHead = 100) {
@@ -184,9 +207,9 @@ function bearer(route: Route) {
   expect(route.request().url()).not.toContain('workspace-fe3');
 }
 
-test('saves the draft before compiling and shows a protected, paginated PDF', async ({ page }) => {
+test('saves the draft before compiling and shows a protected, continuous PDF', async ({ page }) => {
   const { server } = await installWorkspace(page);
-  const pdf = pdfFixture();
+  const pdf = pdfFixture(700);
   const accepted: number[] = [];
   await page.route('**/api/projects/1/compilations', (route) => {
     bearer(route);
@@ -209,10 +232,27 @@ test('saves the draft before compiling and shows a protected, paginated PDF', as
   await editor.fill('New revision');
   await page.getByRole('button', { name: 'Скомпілювати', exact: true }).click();
   await page.getByRole('button', { name: 'Зберегти й скомпілювати' }).click();
-  await expect(page.getByLabel('Текст сторінки')).toContainText('Research report');
+  const frame = page.locator('.pdf-page-frame');
+  const firstPage = page.locator('.pdf-page[data-page-number="1"]');
+  const secondPage = page.locator('.pdf-page[data-page-number="2"]');
+  await expect(firstPage.getByLabel('Текст сторінки', { exact: true })).toContainText(
+    'Research report',
+  );
   expect(accepted).toEqual([101]);
-  await page.getByRole('button', { name: 'Наступна сторінка' }).click();
-  await expect(page.getByRole('navigation', { name: 'Сторінки PDF' })).toContainText('2 / 2');
+  await expect(page.getByRole('button', { name: 'Попередня сторінка' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Наступна сторінка' })).toHaveCount(0);
+  const zoomValue = page.locator('.pdf-zoom-value');
+  const initialZoom = await zoomValue.textContent();
+  await page.getByRole('button', { name: 'Збільшити масштаб', exact: true }).click();
+  await expect(zoomValue).not.toHaveText(initialZoom ?? '');
+  await page.getByRole('button', { name: 'Зменшити масштаб', exact: true }).click();
+  await expect(zoomValue).toHaveText(initialZoom ?? '');
+  await page.getByRole('button', { name: 'За шириною', exact: true }).click();
+  await scrollPageIntoView(frame, 2);
+  await expect(secondPage.getByLabel('Текст сторінки', { exact: true })).toContainText(
+    'Research report',
+  );
+  await expect(page.locator('.pdf-page-indicator')).toHaveText('2 / 2');
   const downloaded = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Завантажити PDF' }).click();
   expect(await readFile((await (await downloaded).path())!)).toEqual(pdf);
@@ -222,8 +262,57 @@ test('saves the draft before compiling and shows a protected, paginated PDF', as
   const result = page.getByRole('button', { name: 'Лише PDF', exact: true });
   if ((await result.getAttribute('aria-pressed')) === 'false') await result.click();
   await expect(page.getByText(/PDF версії 2/)).toBeVisible();
-  if (singlePanel)
-    await expect(page.getByRole('navigation', { name: 'Сторінки PDF' })).toContainText('2 / 2');
+  if (singlePanel) await expect(page.locator('.pdf-page-indicator')).toHaveText('2 / 2');
+});
+
+test('renders only nearby pages when scrolling through a long PDF', async ({ page }) => {
+  await installWorkspace(page);
+  await page.route('**/api/projects/1/compilations', (route) =>
+    route.fulfill({ status: 202, json: job(100, 'queued') }),
+  );
+  await page.route('**/api/projects/1/compilations/50', (route) =>
+    route.fulfill({ json: job(100, 'succeeded') }),
+  );
+  await page.route('**/api/projects/1/compilations/50/pdf', (route) =>
+    route.fulfill({ contentType: 'application/pdf', body: pdfFixture(700, 60) }),
+  );
+  await page.goto('/projects/1');
+  await page.getByRole('button', { name: 'Скомпілювати', exact: true }).click();
+  const frame = page.locator('.pdf-page-frame');
+  const first = frame.locator('.pdf-page[data-page-number="1"]');
+  const last = frame.locator('.pdf-page[data-page-number="60"]');
+  await expect(first.getByLabel('Текст сторінки')).toContainText('Research report');
+  expect(await frame.locator('.pdf-page').count()).toBeLessThan(8);
+  await frame.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await expect(last.getByLabel('Текст сторінки')).toContainText('Research report');
+  await expect(first).toHaveCount(0);
+  expect(await frame.locator('canvas').count()).toBeLessThan(8);
+});
+
+test('restores horizontal PDF position when returning to split view', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await installWorkspace(page);
+  await page.goto('/projects/1');
+  const frame = page.locator('.pdf-page-frame');
+  const zoom = page.locator('.pdf-zoom-value');
+  await expect(zoom).toBeVisible();
+  const initial = await zoom.textContent();
+  await frame.dispatchEvent('wheel', { deltaY: -70, ctrlKey: true });
+  await expect(zoom).not.toHaveText(initial ?? '');
+  await frame.evaluate((element) => {
+    element.scrollLeft = element.scrollWidth;
+  });
+  await expect.poll(() => frame.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
+  const before = await frame.evaluate((element) => element.scrollLeft);
+  const scale = await zoom.textContent();
+
+  await page.getByRole('button', { name: 'Лише PDF', exact: true }).click();
+  await expect.poll(() => frame.evaluate((element) => element.scrollLeft)).toBe(0);
+  await page.getByRole('button', { name: 'Код і PDF', exact: true }).click();
+  await expect.poll(() => frame.evaluate((element) => element.scrollLeft)).toBeCloseTo(before, 0);
+  await expect(zoom).toHaveText(scale ?? '');
 });
 
 test('preserves the PDF page and scroll position when switching to diagnostics', async ({
@@ -253,24 +342,79 @@ test('preserves the PDF page and scroll position when switching to diagnostics',
   );
   await page.goto('/projects/1');
   await page.getByRole('button', { name: 'Скомпілювати', exact: true }).click();
-  const pagination = page.getByRole('navigation', { name: 'Сторінки PDF' });
-  await page.getByRole('button', { name: 'Наступна сторінка' }).click();
-  await expect(pagination).toContainText('2 / 2');
-  await expect(page.getByLabel('Текст сторінки')).toContainText('Research report');
   const frame = page.locator('.pdf-page-frame');
-  await frame.evaluate((element) => {
-    element.scrollTop = 50;
-  });
+  const secondPage = page.locator('.pdf-page[data-page-number="2"]');
+  await scrollPageIntoView(frame, 2);
+  await expect(secondPage.getByLabel('Текст сторінки', { exact: true })).toContainText(
+    'Research report',
+  );
   await expect.poll(() => frame.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  await expect(page.locator('.pdf-page-indicator')).toHaveText('2 / 2');
   const scrollTop = await frame.evaluate((element) => element.scrollTop);
   await page.getByRole('button', { name: 'Діагностика (1)', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Діагностика (1)', exact: true })).toBeFocused();
   await expect(page.getByText('Test warning', { exact: true })).toBeVisible();
-  await expect(pagination).toBeHidden();
+  await expect(page.locator('.pdf-page-indicator')).toBeHidden();
   await page.getByRole('button', { name: 'PDF', exact: true }).click();
   await expect(page.getByRole('button', { name: 'PDF', exact: true })).toBeFocused();
-  await expect(pagination).toContainText('2 / 2');
+  await expect(page.locator('.pdf-page-indicator')).toHaveText('2 / 2');
   await expect.poll(() => frame.evaluate((element) => element.scrollTop)).toBe(scrollTop);
+});
+
+test('keeps the reading point and zoom when replacing a PDF', async ({ page }) => {
+  await installWorkspace(page);
+  const pdfs = [
+    pdfFixture(700),
+    pdfFixture(850, 2, 'Replacement report', 820),
+    pdfFixture(170, 1, 'Short report'),
+  ];
+  let starts = 0;
+  await page.route('**/api/projects/1/compilations', (route) => {
+    return route.fulfill({ status: 202, json: job(100, 'queued', { id: 50 + starts++ }) });
+  });
+  for (const [index, pdf] of pdfs.entries()) {
+    const id = 50 + index;
+    await page.route(`**/api/projects/1/compilations/${id}`, (route) =>
+      route.fulfill({ json: job(100, 'succeeded', { id }) }),
+    );
+    await page.route(`**/api/projects/1/compilations/${id}/pdf`, (route) =>
+      route.fulfill({ contentType: 'application/pdf', body: pdf }),
+    );
+  }
+  await page.goto('/projects/1');
+  const compile = page.getByRole('button', { name: 'Скомпілювати', exact: true });
+  await compile.click();
+  const frame = page.locator('.pdf-page-frame');
+  const firstPage = frame.locator('.pdf-page[data-page-number="1"]');
+  const secondPage = frame.locator('.pdf-page[data-page-number="2"]');
+  const secondPageText = secondPage.getByLabel('Текст сторінки', { exact: true });
+  await expect(firstPage.getByLabel('Текст сторінки')).toContainText('Research report');
+  await page.getByRole('button', { name: 'Збільшити масштаб', exact: true }).click();
+  const zoomValue = page.locator('.pdf-zoom-value');
+  const zoom = await zoomValue.textContent();
+  await scrollPageIntoView(frame, 2);
+  const readFraction = () =>
+    secondPage.evaluate((element) => {
+      const panel = element.closest('.pdf-page-frame')!;
+      return (
+        (panel.getBoundingClientRect().top - element.getBoundingClientRect().top) /
+        element.getBoundingClientRect().height
+      );
+    });
+  const before = await readFraction();
+  expect(before).toBeGreaterThan(0);
+
+  await compile.click();
+  await expect(secondPageText).toContainText('Replacement report');
+  await expect(zoomValue).toHaveText(zoom ?? '');
+  await expect(page.locator('.pdf-page-indicator')).toHaveText('2 / 2');
+  expect(await readFraction()).toBeCloseTo(before, 2);
+
+  await compile.click();
+  await expect(firstPage.getByLabel('Текст сторінки')).toContainText('Short report');
+  await expect(secondPage).toHaveCount(0);
+  await expect(zoomValue).toHaveText(zoom ?? '');
+  await expect(page.locator('.pdf-page-indicator')).toHaveText('1 / 1');
 });
 
 test('keeps warnings visible during a delayed PDF download and its retry', async ({ page }) => {
@@ -316,7 +460,9 @@ test('keeps warnings visible during a delayed PDF download and its retry', async
   await expect(warning).toBeVisible();
   release();
   await page.getByRole('button', { name: 'PDF', exact: true }).click();
-  await expect(page.getByLabel('Текст сторінки')).toContainText('Research report');
+  await expect(
+    page.locator('.pdf-page[data-page-number="1"]').getByLabel('Текст сторінки', { exact: true }),
+  ).toContainText('Research report');
   await page.getByRole('button', { name: 'Діагностика (1)', exact: true }).click();
   await expect(warning).toBeVisible();
 });

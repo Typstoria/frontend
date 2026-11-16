@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, defineAsyncComponent, onBeforeUnmount, ref, shallowRef, watch } from 'vue';
 import type { Diagnostic } from './compilation-api';
 import type { createCompilationModel } from './compilation-model';
 
@@ -10,18 +10,40 @@ const props = defineProps<{
   unsaved: boolean;
   canOpenFile: (item: Diagnostic) => boolean;
 }>();
+type Artifact = NonNullable<typeof props.output.artifact>;
 const emit = defineEmits<{
   retry: [];
-  download: [];
-  open: [];
+  download: [artifact: Artifact];
+  open: [artifact: Artifact];
   source: [item: Diagnostic];
 }>();
 const mode = ref<'pdf' | 'diagnostics'>('pdf');
+const displayedArtifact = shallowRef<Artifact | null>(null);
+function setDisplayedPdf(pdf: Blob) {
+  if (props.output.artifact?.pdf === pdf) displayedArtifact.value = props.output.artifact;
+}
+watch(
+  () => props.output.artifact,
+  (artifact) => {
+    if (!artifact) displayedArtifact.value = null;
+  },
+);
+const displayedPdfAvailable = ref(false);
+watch(displayedArtifact, (artifact, _, onCleanup) => {
+  const remaining = Date.parse(artifact?.job.artifactExpiresAt ?? '') - Date.now();
+  displayedPdfAvailable.value = remaining > 0;
+  if (remaining > 0) {
+    const timer = setTimeout(() => {
+      displayedPdfAvailable.value = false;
+    }, remaining);
+    onCleanup(() => clearTimeout(timer));
+  }
+});
 const showInitialSkeleton = ref(false);
 let skeletonTimer: ReturnType<typeof setTimeout> | undefined;
 const diagnostics = computed(() => props.output.job?.diagnostics ?? []);
 const previousPdf = computed(() => {
-  const artifact = props.output.artifact;
+  const artifact = displayedArtifact.value;
   return (
     !!artifact &&
     (artifact.job.id !== props.output.job?.id ||
@@ -94,24 +116,24 @@ watch(
         <h2 v-else-if="!diagnostics.length">PDF</h2>
       </div>
       <button
-        v-if="output.artifact && mode === 'pdf'"
+        v-if="displayedArtifact && displayedPdfAvailable && mode === 'pdf'"
         class="button button-quiet output-download"
         type="button"
         title="Завантажити PDF"
         aria-label="Завантажити PDF"
-        @click="emit('download')"
+        @click="emit('download', displayedArtifact)"
       >
         <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
           <path d="M10 2.5v9m0 0 3.5-3.5M10 11.5 6.5 8M3.5 13v3.5h13V13" />
         </svg>
       </button>
       <button
-        v-if="output.artifact && mode === 'pdf'"
+        v-if="displayedArtifact && displayedPdfAvailable && mode === 'pdf'"
         class="button button-quiet output-open"
         type="button"
         title="Відкрити PDF у новій вкладці"
         aria-label="Відкрити PDF у новій вкладці"
-        @click="emit('open')"
+        @click="emit('open', displayedArtifact)"
       >
         <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
           <path d="M11.5 3.5h5v5m-.5-4.5-7 7" />
@@ -160,11 +182,10 @@ watch(
       </ul>
     </div>
     <div v-if="output.artifact" v-show="mode === 'pdf'" class="workspace-output-pdf">
-      <p v-if="previousPdf" class="output-revision">
-        PDF версії {{ output.artifact.revision.number }}. Скомпілюйте ще раз для актуального
-        документа.
+      <p v-if="previousPdf && displayedArtifact" class="output-revision">
+        PDF версії {{ displayedArtifact.revision.number }}.
       </p>
-      <PdfDocument :key="output.artifact.job.id" :pdf="output.artifact.pdf" />
+      <PdfDocument :pdf="output.artifact.pdf" @displayed="setDisplayedPdf" />
     </div>
     <div
       v-else-if="mode === 'pdf' && output.busy && showInitialSkeleton"
