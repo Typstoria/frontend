@@ -273,6 +273,77 @@ test('autosaves a draft before compiling and shows a protected, continuous PDF',
   await expect(page.locator('.pdf-page-indicator')).toHaveText('2 / 2');
 });
 
+test('previews unsaved Typst edits while keeping the accepted PDF available', async ({ page }) => {
+  const { server } = await installWorkspace(page);
+  let releaseSave!: () => void;
+  let markSaveIntercepted!: () => void;
+  const saveGate = new Promise<void>((resolve) => {
+    releaseSave = resolve;
+  });
+  const saveIntercepted = new Promise<void>((resolve) => {
+    markSaveIntercepted = resolve;
+  });
+  await page.route('**/api/projects/1/changes', async (route) => {
+    markSaveIntercepted();
+    await saveGate;
+    await route.fallback();
+  });
+
+  try {
+    await page.goto('/projects/1');
+    const editor = page.getByRole('textbox', { name: 'Вихідний текст' });
+    const preview = page.getByRole('button', { name: 'Лише PDF', exact: true });
+    const compact =
+      (await page.getByRole('button', { name: 'Код і PDF', exact: true }).count()) === 0;
+    if (compact) await preview.click();
+    await expect(page.locator('.pdf-page').first().getByLabel('Текст сторінки')).toContainText(
+      'Startup PDF',
+    );
+    if (compact) await page.getByRole('button', { name: 'Лише код', exact: true }).click();
+    await editor.fill('= Draft preview');
+
+    if (compact) await preview.click();
+
+    const output = page.locator('#workspace-output');
+    const draft = output.locator('.workspace-output-draft');
+    await expect(draft).toBeVisible({ timeout: 30_000 });
+    await expect(output.getByRole('heading', { name: 'Чернетка' })).toBeVisible();
+    await expect(draft.locator('.preview-page-indicator')).toHaveText('1 / 1');
+    await saveIntercepted;
+    expect(server.head).toBe(100);
+    expect(server.saveCount).toBe(0);
+
+    await expect(output.locator('.workspace-output-pdf')).toHaveCount(1);
+    await output.getByRole('button', { name: 'Показати PDF', exact: true }).click();
+    await expect(output.getByRole('heading', { name: 'PDF', exact: true })).toBeVisible();
+    await expect(output.locator('.pdf-page').first().getByLabel('Текст сторінки')).toContainText(
+      'Startup PDF',
+    );
+    const download = page.waitForEvent('download');
+    await output.getByRole('button', { name: 'Завантажити PDF', exact: true }).click();
+    expect((await readFile((await (await download).path())!)).toString()).toContain('Startup PDF');
+
+    await output.getByRole('button', { name: 'Показати чернетку', exact: true }).click();
+    await expect(draft).toBeVisible();
+    const canvas = draft.locator('canvas').first();
+    await expect(canvas).toBeVisible();
+    const beforeError = await canvas.evaluate((element: HTMLCanvasElement) => element.toDataURL());
+    if (compact) await page.getByRole('button', { name: 'Лише код', exact: true }).click();
+    await editor.fill('#let broken =');
+    if (compact) await preview.click();
+    const diagnostics = page.getByRole('region', { name: 'Діагностика компіляції' });
+    await expect(diagnostics).toContainText('Чернетка');
+    await expect(draft).toBeVisible();
+    expect(await canvas.evaluate((element: HTMLCanvasElement) => element.toDataURL())).toBe(
+      beforeError,
+    );
+    expect(server.head).toBe(100);
+    expect(server.saveCount).toBe(0);
+  } finally {
+    releaseSave();
+  }
+});
+
 test('renders only nearby pages when scrolling through a long PDF', async ({ page }) => {
   await installWorkspace(page);
   await page.route('**/api/projects/1/compilations', (route) =>

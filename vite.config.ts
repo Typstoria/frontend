@@ -1,10 +1,19 @@
 import vue from '@vitejs/plugin-vue';
 import { defineConfig, loadEnv } from 'vite';
+import { typstWasmCsp } from './scripts/typst-wasm-csp';
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   return {
-    plugins: [vue()],
+    plugins: [vue(), typstWasmCsp()],
+    worker: { plugins: () => [typstWasmCsp()] },
+    optimizeDeps: {
+      exclude: [
+        '@myriaddreamin/typst.ts',
+        '@myriaddreamin/typst-ts-web-compiler',
+        '@myriaddreamin/typst-ts-renderer',
+      ],
+    },
     server: {
       host: 'localhost',
       port: 5173,

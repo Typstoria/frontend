@@ -138,7 +138,10 @@ async function installWorkspaceApi(
 }
 
 async function selectFile(page: Page, path: string) {
-  const file = page.getByRole('button', { name: path, exact: true });
+  const file = page
+    .getByRole('complementary', { name: 'Файли проєкту' })
+    .or(page.getByRole('dialog', { name: 'Файли', exact: true }))
+    .getByRole('button', { name: path, exact: true });
   if (!(await file.isVisible()))
     await page.getByRole('button', { name: 'Показати файли', exact: true }).click();
   await file.click();

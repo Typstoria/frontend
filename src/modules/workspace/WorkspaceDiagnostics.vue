@@ -5,7 +5,7 @@ import WorkspaceSeparator from './WorkspaceSeparator.vue';
 
 type DiagnosticsResult = {
   revisionId: number;
-  revisionNumber: number;
+  revisionNumber: number | null;
   items: Diagnostic[];
 };
 
@@ -138,7 +138,9 @@ function openSource(item: Diagnostic) {
       }"
     >
       <div ref="naturalContent" class="diagnostics-content">
-        <p v-if="result" class="diagnostics-revision">Версія {{ result.revisionNumber }}</p>
+        <p v-if="result" class="diagnostics-revision">
+          {{ result.revisionNumber === null ? 'Чернетка' : `Версія ${result.revisionNumber}` }}
+        </p>
         <ul>
           <li v-for="(item, index) in items" :key="index" :class="item.severity">
             <span class="diagnostic-severity">{{

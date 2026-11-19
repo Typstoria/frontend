@@ -5,9 +5,13 @@ import { compilationRetryLabels } from './compilation-model';
 import type { PdfView } from './pdf-layout';
 
 const PdfDocument = defineAsyncComponent(() => import('./PdfDocument.vue'));
+const LivePreviewDocument = defineAsyncComponent(() => import('./LivePreviewDocument.vue'));
 const props = defineProps<{
   output: ReturnType<typeof createCompilationModel>['state'];
   initialView?: PdfView | undefined;
+  draft?: Uint8Array | undefined;
+  currentRevisionId?: number;
+  draftDirty?: boolean;
 }>();
 type Artifact = NonNullable<typeof props.output.artifact>;
 const emit = defineEmits<{
@@ -15,8 +19,29 @@ const emit = defineEmits<{
   download: [artifact: Artifact];
   open: [artifact: Artifact];
   viewChange: [view: PdfView];
+  draftClosed: [document: Uint8Array];
 }>();
 const displayedArtifact = shallowRef<Artifact | null>(null);
+const displayedDraft = shallowRef<Uint8Array>();
+const preferSaved = ref(false);
+const draftAhead = computed(
+  () =>
+    !!props.draft &&
+    (props.draftDirty || displayedArtifact.value?.revision.id !== props.currentRevisionId),
+);
+const showDraft = computed(() => draftAhead.value && !!displayedDraft.value && !preferSaved.value);
+watch([draftAhead, () => props.draft], ([ahead, draft]) => {
+  if (!ahead) {
+    displayedDraft.value = undefined;
+    preferSaved.value = false;
+    if (draft) emit('draftClosed', draft);
+  }
+});
+
+function setDisplayedDraft(document: Uint8Array) {
+  if (props.draft === document) displayedDraft.value = document;
+}
+
 function setDisplayedPdf(pdf: Blob) {
   if (props.output.artifact?.pdf === pdf) displayedArtifact.value = props.output.artifact;
 }
@@ -27,6 +52,14 @@ watch(
   },
 );
 const displayedPdfAvailable = ref(false);
+const downloadLabel = computed(() =>
+  showDraft.value ? 'Завантажити PDF збереженої версії' : 'Завантажити PDF',
+);
+const openLabel = computed(() =>
+  showDraft.value
+    ? 'Відкрити PDF збереженої версії у новій вкладці'
+    : 'Відкрити PDF у новій вкладці',
+);
 watch(displayedArtifact, (artifact, _, onCleanup) => {
   const remaining = Date.parse(artifact?.job.artifactExpiresAt ?? '') - Date.now();
   displayedPdfAvailable.value = remaining > 0;
@@ -67,13 +100,21 @@ onBeforeUnmount(() => {
 <template>
   <section id="workspace-output" class="workspace-output" aria-label="Результат компіляції">
     <header class="output-heading">
-      <h2>PDF</h2>
+      <h2>{{ showDraft ? 'Чернетка' : 'PDF' }}</h2>
+      <button
+        v-if="draftAhead && displayedDraft && displayedPdfAvailable"
+        type="button"
+        class="button button-quiet output-preview-switch"
+        @click="preferSaved = !preferSaved"
+      >
+        {{ showDraft ? 'Показати PDF' : 'Показати чернетку' }}
+      </button>
       <button
         v-if="displayedArtifact && displayedPdfAvailable"
         class="button button-quiet output-download"
         type="button"
-        title="Завантажити PDF"
-        aria-label="Завантажити PDF"
+        :title="downloadLabel"
+        :aria-label="downloadLabel"
         @click="emit('download', displayedArtifact)"
       >
         <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
@@ -84,8 +125,8 @@ onBeforeUnmount(() => {
         v-if="displayedArtifact && displayedPdfAvailable"
         class="button button-quiet output-open"
         type="button"
-        title="Відкрити PDF у новій вкладці"
-        aria-label="Відкрити PDF у новій вкладці"
+        :title="openLabel"
+        :aria-label="openLabel"
         @click="emit('open', displayedArtifact)"
       >
         <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
@@ -108,27 +149,76 @@ onBeforeUnmount(() => {
         {{ compilationRetryLabels[output.retry] }}
       </button>
     </div>
-    <div v-if="output.artifact" class="workspace-output-pdf">
-      <PdfDocument
-        :pdf="output.artifact.pdf"
-        :initial-view="initialView"
-        @displayed="setDisplayedPdf"
-        @view-change="emit('viewChange', $event)"
-      />
+    <div class="workspace-output-body">
+      <div
+        v-if="output.artifact"
+        class="workspace-output-pdf output-document"
+        :class="{ 'output-concealed': showDraft }"
+      >
+        <PdfDocument
+          :pdf="output.artifact.pdf"
+          :initial-view="initialView"
+          @displayed="setDisplayedPdf"
+          @view-change="!showDraft && emit('viewChange', $event)"
+        />
+      </div>
+      <template v-else-if="!showDraft">
+        <div
+          v-if="output.busy && showInitialSkeleton"
+          class="output-pdf-skeleton"
+          aria-hidden="true"
+        >
+          <div class="output-paper-skeleton"></div>
+        </div>
+        <p v-else-if="!output.busy && !output.error" class="output-empty">PDF ще немає.</p>
+      </template>
+      <div
+        v-if="draftAhead && draft"
+        class="workspace-output-draft output-document"
+        :class="{ 'output-concealed': !showDraft }"
+      >
+        <LivePreviewDocument
+          :document="draft"
+          :initial-view="initialView"
+          @displayed="setDisplayedDraft"
+          @failed="emit('draftClosed', $event)"
+          @view-change="showDraft && emit('viewChange', $event)"
+        />
+      </div>
     </div>
-    <div
-      v-else-if="output.busy && showInitialSkeleton"
-      class="output-pdf-skeleton"
-      aria-hidden="true"
-    >
-      <div class="output-paper-skeleton"></div>
-    </div>
-    <p v-else-if="!output.busy && !output.error" class="output-empty">PDF ще немає.</p>
   </section>
 </template>
 
 <style scoped>
 .output-download {
+  margin-left: auto;
+}
+
+.workspace-output-body {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.output-document {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.output-concealed {
+  visibility: hidden;
+}
+
+.output-heading .output-preview-switch {
+  margin-left: 4px;
+}
+
+.output-preview-switch + .output-download {
   margin-left: auto;
 }
 

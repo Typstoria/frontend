@@ -1,0 +1,20 @@
+/** Same-origin font URLs for the Typst browser preview. */
+export const typstFontUrls = [
+  '/typst-fonts/DejaVuSansMono-Bold.ttf',
+  '/typst-fonts/DejaVuSansMono-BoldOblique.ttf',
+  '/typst-fonts/DejaVuSansMono-Oblique.ttf',
+  '/typst-fonts/DejaVuSansMono.ttf',
+  '/typst-fonts/LibertinusSerif-Bold.otf',
+  '/typst-fonts/LibertinusSerif-BoldItalic.otf',
+  '/typst-fonts/LibertinusSerif-Italic.otf',
+  '/typst-fonts/LibertinusSerif-Regular.otf',
+  '/typst-fonts/LibertinusSerif-Semibold.otf',
+  '/typst-fonts/LibertinusSerif-SemiboldItalic.otf',
+  '/typst-fonts/NewCM10-Bold.otf',
+  '/typst-fonts/NewCM10-BoldItalic.otf',
+  '/typst-fonts/NewCM10-Italic.otf',
+  '/typst-fonts/NewCM10-Regular.otf',
+  '/typst-fonts/NewCMMath-Bold.otf',
+  '/typst-fonts/NewCMMath-Book.otf',
+  '/typst-fonts/NewCMMath-Regular.otf',
+] as const;

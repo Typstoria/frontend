@@ -49,6 +49,7 @@ import FileAddMenu from './FileAddMenu.vue';
 import WorkspaceMainMenu, { type WorkspaceMainMenuGroup } from './WorkspaceMainMenu.vue';
 import { createProjectsApi, titleError } from '../projects/projects-api';
 import { openPdfTab } from './pdf-tab';
+import { createLivePreview, type PreviewInput } from './live-preview';
 import type { PdfView } from './pdf-layout';
 import {
   createWorkspacePreferences,
@@ -69,7 +70,8 @@ const panelSizes = ref<PanelSizes>(preferences.panels);
 const preferredMode = ref(preferences.project.mode);
 const pdfView = ref<PdfView | undefined>(preferences.project.pdf);
 const preferencesReady = ref(false);
-const model = createWorkspaceModel(projectId, createWorkspaceApi(identitySession.request));
+const workspaceApi = createWorkspaceApi(identitySession.request);
+const model = createWorkspaceModel(projectId, workspaceApi);
 const { state, atRisk } = model;
 const workspacePath = `/projects/${projectId}`;
 const historyOpen = computed(() => route.params.workspaceView === 'history');
@@ -131,6 +133,19 @@ const canCompile = computed(
     compilation.state.retry !== 'status',
 );
 const resourceApi = createResourceApi(identitySession.request);
+const livePreview = createLivePreview(projectId, workspaceApi, resourceApi);
+const liveDocument = livePreview.document;
+const livePreviewSupported =
+  import.meta.env.VITE_WORKSPACE_LIVE_PREVIEW !== 'false' &&
+  typeof Worker !== 'undefined' &&
+  typeof WebAssembly !== 'undefined';
+const previewEdited = ref(false);
+const hasDraftText = computed(() =>
+  Object.values(state.files).some((file) => file.base !== file.content),
+);
+watch(hasDraftText, (dirty) => {
+  if (dirty) previewEdited.value = true;
+});
 const resourceController = new AbortController();
 const tabIds = ref<TabId[]>([]);
 const activeTab = ref<TabId | null>(null);
@@ -330,7 +345,7 @@ const menuGroups = computed<WorkspaceMainMenuGroup[]>(() => [
         checked: effectiveViewMode.value === 'preview',
         disabled: !!inlineName.value,
       },
-      ...(compilation.state.diagnostics?.items.length
+      ...(displayDiagnostics.value?.items.length
         ? [
             {
               id: 'diagnostics',
@@ -873,6 +888,61 @@ const effectiveViewMode = computed<ViewMode>(() =>
 );
 const onlyOutput = computed(() => effectiveViewMode.value === 'preview');
 const showOutput = computed(() => effectiveViewMode.value !== 'code');
+const livePreviewAllowed = computed(
+  () =>
+    livePreviewSupported &&
+    !historyOpen.value &&
+    !state.conflict &&
+    !restoreLocked.value &&
+    identitySession.user.value?.id === ownerId,
+);
+const previewInput = computed<PreviewInput | null>(() => {
+  const snapshot = state.snapshot;
+  if (!snapshot || !livePreviewAllowed.value || !showOutput.value || !previewEdited.value)
+    return null;
+  return {
+    revisionId: snapshot.revision.id,
+    mainFileId: snapshot.mainFileId,
+    tree: snapshot.tree,
+    texts: new Map(Object.entries(state.files).map(([id, file]) => [Number(id), file.content])),
+  };
+});
+watch(previewInput, (input) => {
+  if (input) livePreview.request(input);
+});
+watch(
+  [() => state.resetKey, () => Boolean(state.conflict), () => identitySession.user.value?.id],
+  () => {
+    livePreview.reset();
+    previewEdited.value = hasDraftText.value;
+  },
+  { flush: 'sync' },
+);
+const displayDiagnostics = computed(() => {
+  const snapshot = state.snapshot;
+  const issues = livePreview.diagnostics.value;
+  if (
+    snapshot &&
+    livePreviewAllowed.value &&
+    issues.length &&
+    (hasDraftText.value || compilation.state.artifact?.revision.id !== snapshot.revision.id)
+  ) {
+    return {
+      revisionId: snapshot.revision.id,
+      revisionNumber: null,
+      items: issues.map((item): Diagnostic => {
+        const path = item.path ?? null;
+        const file = snapshot.tree.find((entry) => entry.path === path);
+        return { ...item, path, fileId: file?.fileId ?? null, range: null };
+      }),
+    };
+  }
+  return compilation.state.diagnostics;
+});
+
+function warmLivePreview() {
+  if (livePreviewAllowed.value) livePreview.warm();
+}
 function splitChanged(event: MediaQueryListEvent) {
   canSplit.value = event.matches;
 }
@@ -1310,6 +1380,7 @@ onMounted(() => {
   void loadWorkspace();
 });
 onBeforeUnmount(() => {
+  livePreview.reset();
   preferences.flush();
   window.removeEventListener('pagehide', preferences.flush);
   resourceController.abort();
@@ -1740,6 +1811,7 @@ onBeforeUnmount(() => {
           id="workspace-source"
           class="editor-source"
           aria-label="Редактор файла"
+          @focusin="warmLivePreview"
         >
           <div v-if="activeTab !== null" class="editor-file-bar">
             <WorkspaceTabs
@@ -1867,6 +1939,10 @@ onBeforeUnmount(() => {
           v-show="showOutput"
           :output="compilation.state"
           :initial-view="pdfView"
+          :draft="liveDocument"
+          :current-revision-id="state.snapshot.revision.id"
+          :draft-dirty="hasDraftText"
+          @draft-closed="livePreview.discard"
           @view-change="pdfView = $event"
           @retry="compilation.retry"
           @download="downloadPdf"
@@ -1876,7 +1952,7 @@ onBeforeUnmount(() => {
       <WorkspaceDiagnostics
         v-if="!state.conflict"
         v-model:open="diagnosticsOpen"
-        :result="compilation.state.diagnostics"
+        :result="displayDiagnostics"
         :height="panelSizes.diagnosticsHeight"
         :max-height="maxDiagnosticsHeight"
         :can-open-file="canOpenDiagnostic"
