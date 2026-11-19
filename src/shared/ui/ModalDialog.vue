@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, useId } from 'vue';
 
-const props = defineProps<{ open: boolean; title: string; busy?: boolean }>();
+const props = defineProps<{ open: boolean; title: string; busy?: boolean; dialogClass?: string }>();
 const emit = defineEmits<{ dismiss: []; closed: [] }>();
 const titleId = useId();
 let dialog: HTMLDialogElement | null = null;
@@ -27,9 +27,10 @@ function cancel(event: Event) {
   if (!props.busy) emit('dismiss');
 }
 function trapFocus(event: KeyboardEvent) {
+  event.stopPropagation();
   const controls = Array.from(
     dialog?.querySelectorAll<HTMLElement>(
-      'button:not(:disabled), input:not(:disabled), a[href], select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])',
+      'button:not(:disabled), input:not(:disabled), a[href], select:not(:disabled), textarea:not(:disabled), summary, [tabindex]:not([tabindex="-1"])',
     ) ?? [],
   ).filter((element) => element.getClientRects().length > 0);
   const target = event.shiftKey ? controls.at(-1) : controls[0];
@@ -42,10 +43,10 @@ function trapFocus(event: KeyboardEvent) {
 </script>
 
 <template>
-  <Transition name="modal" @enter="enter" @after-leave="afterLeave">
+  <Transition appear name="modal" @enter="enter" @after-leave="afterLeave">
     <dialog
       v-if="open"
-      class="modal-dialog"
+      :class="['modal-dialog', dialogClass]"
       :aria-labelledby="titleId"
       :aria-busy="busy"
       @cancel="cancel"

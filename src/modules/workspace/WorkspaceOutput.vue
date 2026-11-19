@@ -6,8 +6,6 @@ import { compilationRetryLabels } from './compilation-model';
 const PdfDocument = defineAsyncComponent(() => import('./PdfDocument.vue'));
 const props = defineProps<{
   output: ReturnType<typeof createCompilationModel>['state'];
-  headId: number;
-  unsaved: boolean;
 }>();
 type Artifact = NonNullable<typeof props.output.artifact>;
 const emit = defineEmits<{
@@ -38,16 +36,6 @@ watch(displayedArtifact, (artifact, _, onCleanup) => {
 });
 const showInitialSkeleton = ref(false);
 let skeletonTimer: ReturnType<typeof setTimeout> | undefined;
-const previousPdf = computed(() => {
-  const artifact = displayedArtifact.value;
-  return (
-    !!artifact &&
-    (artifact.job.id !== props.output.job?.id ||
-      artifact.revision.id !== props.headId ||
-      !artifact.job.isCurrent ||
-      props.unsaved)
-  );
-});
 const progress = computed(() => {
   return props.output.artifact ? 'Оновлення PDF…' : 'Підготовка PDF…';
 });
@@ -118,9 +106,6 @@ onBeforeUnmount(() => {
       </button>
     </div>
     <div v-if="output.artifact" class="workspace-output-pdf">
-      <p v-if="previousPdf && displayedArtifact" class="output-revision">
-        PDF версії {{ displayedArtifact.revision.number }}.
-      </p>
       <PdfDocument :pdf="output.artifact.pdf" @displayed="setDisplayedPdf" />
     </div>
     <div

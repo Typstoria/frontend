@@ -11,7 +11,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  'update:modelValue': [value: string];
+  'update:modelValue': [value: string, fileId: number];
   save: [];
   composition: [active: boolean];
 }>();
@@ -115,7 +115,7 @@ async function initialize() {
     viewModule.EditorView.updateListener.of((update) => {
       states.set(activeDocumentId, update.state);
       if (update.docChanged && !syncingExternalValue) {
-        emit('update:modelValue', update.state.doc.toString());
+        emit('update:modelValue', update.state.doc.toString(), activeDocumentId);
       }
     }),
   ];

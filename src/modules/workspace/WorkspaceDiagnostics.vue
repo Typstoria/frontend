@@ -3,7 +3,6 @@ import { computed, ref, watch } from 'vue';
 import type { Diagnostic } from './compilation-api';
 
 type DiagnosticsResult = {
-  jobId: number;
   revisionId: number;
   revisionNumber: number;
   items: Diagnostic[];
@@ -18,28 +17,16 @@ const emit = defineEmits<{
   source: [item: Diagnostic, revisionId: number];
 }>();
 
-const panelState = ref<'closed' | 'auto' | 'manual'>('closed');
-const isOpen = computed(() => panelState.value !== 'closed');
+const isOpen = ref(false);
 const items = computed(() => props.result?.items ?? []);
 
 watch(
-  () => [props.result?.jobId, props.result?.revisionId] as const,
-  ([jobId, revisionId], previous) => {
-    const isNewResult = jobId !== previous?.[0] || revisionId !== previous?.[1];
-    if (!isNewResult || !jobId || panelState.value === 'manual') return;
-
-    panelState.value = items.value.some((item) => item.severity === 'error') ? 'auto' : 'closed';
+  () => props.result,
+  () => {
+    isOpen.value = items.value.some((item) => item.severity === 'error');
   },
   { immediate: true },
 );
-
-function toggle() {
-  if (isOpen.value) {
-    panelState.value = 'closed';
-    return;
-  }
-  panelState.value = 'manual';
-}
 
 function openSource(item: Diagnostic) {
   if (props.result && props.canOpenFile(item, props.result.revisionId)) {
@@ -49,13 +36,13 @@ function openSource(item: Diagnostic) {
 </script>
 
 <template>
-  <section v-if="items.length || panelState === 'manual'" class="workspace-diagnostics">
+  <section v-if="items.length" class="workspace-diagnostics">
     <button
       class="diagnostics-toggle"
       type="button"
       aria-controls="workspace-diagnostics-panel"
       :aria-expanded="isOpen"
-      @click="toggle"
+      @click="isOpen = !isOpen"
     >
       <span>Діагностика ({{ items.length }})</span>
       <span class="diagnostics-chevron" aria-hidden="true">{{ isOpen ? '⌄' : '⌃' }}</span>
@@ -70,8 +57,7 @@ function openSource(item: Diagnostic) {
       tabindex="-1"
     >
       <p v-if="result" class="diagnostics-revision">Версія {{ result.revisionNumber }}</p>
-      <p v-if="!items.length" class="diagnostics-empty">Немає діагностичних повідомлень.</p>
-      <ul v-else>
+      <ul>
         <li v-for="(item, index) in items" :key="index" :class="item.severity">
           <span class="diagnostic-severity">{{
             item.severity === 'error' ? 'Помилка' : 'Попередження'
@@ -141,20 +127,12 @@ function openSource(item: Diagnostic) {
   border-top: 1px solid var(--color-border);
 }
 
-.diagnostics-revision,
-.diagnostics-empty {
+.diagnostics-revision {
   margin: 0;
   padding: 7px 12px;
   color: var(--color-muted);
   font-size: 12px;
-}
-
-.diagnostics-revision {
   border-bottom: 1px solid var(--color-border);
-}
-
-.diagnostics-empty {
-  font-size: 13px;
 }
 
 .diagnostics-panel ul {

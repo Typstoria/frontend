@@ -270,7 +270,6 @@ test('autosaves a draft before compiling and shows a protected, continuous PDF',
   if (singlePanel) await page.getByRole('button', { name: 'Лише код', exact: true }).click();
   await editor.fill('Unsaved edits');
   if ((await result.getAttribute('aria-pressed')) === 'false') await result.click();
-  await expect(page.getByText(/PDF версії 2/)).toBeVisible();
   await expect(page.locator('.pdf-page-indicator')).toHaveText('2 / 2');
 });
 
@@ -552,9 +551,7 @@ test('keeps warnings visible during a delayed PDF download and its retry', async
     route.fulfill({ contentType: 'application/pdf', body: pdfFixture() }),
   );
   await page.getByRole('button', { name: 'Скомпілювати', exact: true }).click();
-  await expect(page.getByRole('region', { name: 'Діагностика компіляції' })).toContainText(
-    'Немає діагностичних повідомлень.',
-  );
+  await expect(page.getByRole('button', { name: /^Діагностика/ })).toHaveCount(0);
 });
 
 test('opens diagnostics in the source and preserves the editor after a Typst error', async ({
@@ -605,6 +602,54 @@ test('opens diagnostics in the source and preserves the editor after a Typst err
   await expect(page.getByText('TYPST_ERROR')).toHaveCount(0);
 });
 
+test('closes the history dialog with Escape and returns to the same PDF position', async ({
+  page,
+}) => {
+  await installWorkspace(page);
+  await page.route('**/api/projects/1/compilations', (route) =>
+    route.fulfill({ status: 202, json: job(100, 'succeeded') }),
+  );
+  await page.route('**/api/projects/1/compilations/50/pdf', (route) =>
+    route.fulfill({ contentType: 'application/pdf', body: pdfFixture(700) }),
+  );
+  await page.goto('/projects/1');
+  await page.getByRole('button', { name: 'Скомпілювати', exact: true }).click();
+  const frame = page.locator('.pdf-page-frame');
+  await expect(
+    frame.locator('.pdf-page[data-page-number="1"]').getByLabel('Текст сторінки'),
+  ).toContainText('Research report');
+  await page.getByRole('button', { name: 'Збільшити масштаб', exact: true }).click();
+  await scrollPageIntoView(frame, 2);
+  const zoom = page.locator('.pdf-zoom-value');
+  const scale = await zoom.textContent();
+  await expect(page.locator('.pdf-page-indicator')).toHaveText('2 / 2');
+  const top = await frame.evaluate((element) => element.scrollTop);
+
+  const trigger = page.getByRole('link', { name: 'Історія версій' });
+  await trigger.click();
+  await expect(page).toHaveURL(/\/projects\/1\/history$/);
+  const history = page.getByRole('dialog', { name: 'Історія версій', exact: true });
+  const close = history.getByRole('button', { name: 'Закрити історію' });
+  await expect(close).toBeFocused();
+  await expect(history.getByRole('button', { name: /^Версія 1/ })).toBeVisible();
+  const geometry = await history.evaluate((dialog: HTMLElement) => ({
+    modal: dialog.matches(':modal'),
+    width: dialog.offsetWidth,
+    viewport: innerWidth,
+  }));
+  expect(geometry.modal).toBe(true);
+  if (geometry.viewport <= 720) expect(geometry.width).toBe(geometry.viewport);
+  else expect(geometry.width).toBeGreaterThan(800);
+
+  await page.keyboard.press('Escape');
+  await expect(page).toHaveURL(/\/projects\/1$/);
+  await expect(history).toBeHidden();
+  await expect(trigger).toBeFocused();
+  await expect(zoom).toHaveText(scale ?? '');
+  await expect.poll(() => frame.evaluate((element) => element.scrollTop)).toBe(top);
+  await expect(page.locator('.pdf-page-indicator')).toHaveText('2 / 2');
+});
+
 test('retries an ambiguous restore with the same key and reloads cached source', async ({
   page,
 }) => {
@@ -640,23 +685,32 @@ test('retries an ambiguous restore with the same key and reloads cached source',
   await expect(editor).toContainText('Current');
   await page.getByRole('link', { name: 'Історія версій' }).click();
   await expect(page).toHaveURL(/\/projects\/1\/history$/);
-  await page.getByRole('button', { name: /^Версія 1/ }).click();
-  await page.locator('summary').filter({ hasText: 'main.typ' }).click();
-  await expect(page.getByText('+Current', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Файли версії', exact: true }).click();
-  await page.getByRole('button', { name: /^main\.typ/ }).click();
-  await expect(page.locator('.history-snapshot-text')).toHaveText('Original');
-  const filesBack = page.getByRole('button', { name: '← Файли версії', exact: true });
+  const history = page.getByRole('dialog', { name: 'Історія версій', exact: true });
+  await history.getByRole('button', { name: /^Версія 1/ }).click();
+  const change = history.locator('summary').filter({ hasText: 'main.typ' });
+  await expect(change).toBeVisible();
+  await history.getByRole('button', { name: 'Відновити версію', exact: true }).focus();
+  await page.keyboard.press('Tab');
+  await expect(change).toBeFocused();
+  await change.click();
+  await expect(history.getByText('+Current', { exact: true })).toBeVisible();
+  await history.getByRole('button', { name: 'Файли версії', exact: true }).click();
+  await history.getByRole('button', { name: /^main\.typ/ }).click();
+  await expect(history.locator('.history-snapshot-text')).toHaveText('Original');
+  const filesBack = history.getByRole('button', { name: '← Файли версії', exact: true });
   if (await filesBack.isVisible()) await filesBack.click();
-  await page
+  await history
     .getByRole('button', { name: /До порівняння/ })
     .filter({ visible: true })
     .first()
     .click();
-  await page.getByRole('button', { name: 'Відновити версію', exact: true }).click();
-  await page.getByRole('dialog').getByRole('button', { name: 'Відновити', exact: true }).click();
-  await page.getByRole('button', { name: 'Повторити відновлення' }).click();
-  await expect(page.getByText('Створено версію 3.')).toBeVisible();
+  await history.getByRole('button', { name: 'Відновити версію', exact: true }).click();
+  await page
+    .getByRole('dialog', { name: 'Відновити версію?' })
+    .getByRole('button', { name: 'Відновити', exact: true })
+    .click();
+  await history.getByRole('button', { name: 'Повторити відновлення' }).click();
+  await expect(history.getByText('Створено версію 3.')).toBeVisible();
   expect(requests).toEqual([
     {
       key: expect.any(String),
@@ -665,7 +719,7 @@ test('retries an ambiguous restore with the same key and reloads cached source',
     requests[0],
   ]);
   expect(requests[0]?.key).toBeTruthy();
-  await page.getByRole('link', { name: 'Повернутися до редактора', exact: true }).click();
+  await history.getByRole('button', { name: 'Закрити історію' }).click();
   await expect(editor).toContainText('Original');
   expect(server.saveCount).toBe(0);
 });
@@ -786,7 +840,20 @@ test('coalesces saved revisions during an active compile and keeps the previous 
     }),
   );
   await page.route('**/api/projects/1/compilations/52', (route) =>
-    route.fulfill({ json: job(104, 'succeeded', { id: 52 }) }),
+    route.fulfill({
+      json: job(104, 'succeeded', {
+        id: 52,
+        diagnostics: [
+          {
+            fileId: 10,
+            path: 'main.typ',
+            severity: 'warning',
+            message: 'Remaining warning',
+            range: null,
+          },
+        ],
+      }),
+    }),
   );
   await page.route('**/api/projects/1/compilations/52/pdf', (route) =>
     route.fulfill({
@@ -821,22 +888,28 @@ test('coalesces saved revisions during an active compile and keeps the previous 
   ).toContainText('Compiled revision two');
   await expect.poll(() => accepted).toEqual([101, 103]);
   await expect(page.getByText('latest revision failed', { exact: true })).toBeVisible();
-  await expect(page.getByText('PDF версії 2.', { exact: true })).toBeVisible();
+  await expect(page.getByText(/^PDF версії/)).toHaveCount(0);
   await expect(
     page.locator('.pdf-page[data-page-number="1"]').getByLabel('Текст сторінки'),
   ).toContainText('Compiled revision two');
 
   const diagnostics = page.getByRole('region', { name: 'Діагностика компіляції' });
+  const diagnosticsToggle = page.getByRole('button', { name: 'Діагностика (1)' });
+  await diagnosticsToggle.click();
+  await expect(diagnostics).toBeHidden();
+  await diagnosticsToggle.click();
   await diagnostics.getByRole('button', { name: 'main.typ', exact: true }).click();
   await expect(editor).toBeVisible();
   await saveNow('Corrected source', 4);
   if (!(await page.locator('#workspace-output').isVisible()))
     await page.getByRole('button', { name: 'Лише PDF', exact: true }).click();
-  await expect(diagnostics).toBeHidden();
+  await expect(diagnosticsToggle).toHaveAttribute('aria-expanded', 'false');
   await expect(
     page.locator('.pdf-page[data-page-number="1"]').getByLabel('Текст сторінки'),
   ).toContainText('Corrected report');
   expect(accepted).toEqual([101, 103, 104]);
+  await diagnosticsToggle.click();
+  await expect(diagnostics).toContainText('Remaining warning');
 });
 
 test('refreshes on a concurrent restore conflict and asks for a new confirmation', async ({
@@ -872,11 +945,16 @@ test('refreshes on a concurrent restore conflict and asks for a new confirmation
     });
   });
   await page.goto('/projects/1/history');
+  const history = page.getByRole('dialog', { name: 'Історія версій', exact: true });
+  await expect(history).toBeVisible();
   const original = page.getByRole('button', { name: /^Версія 1/ });
   const restore = async () => {
     await original.click();
     await page.getByRole('button', { name: 'Відновити версію', exact: true }).click();
-    await page.getByRole('dialog').getByRole('button', { name: 'Відновити', exact: true }).click();
+    await page
+      .getByRole('dialog', { name: 'Відновити версію?' })
+      .getByRole('button', { name: 'Відновити', exact: true })
+      .click();
   };
   await restore();
   await expect(page.getByText(/З’явилася новіша версія/)).toBeVisible();
@@ -885,6 +963,9 @@ test('refreshes on a concurrent restore conflict and asks for a new confirmation
   await restore();
   await expect(page.getByText('Створено версію 4.')).toBeVisible();
   expect(expectedHeads).toEqual([101, 102]);
+  await history.getByRole('button', { name: 'Закрити історію' }).click();
+  await expect(page).toHaveURL(/\/projects\/1$/);
+  await expect(page.getByRole('link', { name: 'Історія версій' })).toBeFocused();
 });
 
 test('manually recompiles the clean current revision when its PDF has expired', async ({

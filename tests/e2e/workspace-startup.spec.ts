@@ -12,7 +12,7 @@ const user = {
   createdAt: date,
 };
 
-test('opens an accepted historical revision and labels the PDF revision', async ({ page }) => {
+test('opens the available PDF from a previous revision without recompiling', async ({ page }) => {
   let ensureCalls = 0;
   await installWorkspace(page, false);
   await installWorkspaceStartupMock(page, 98, 2);
@@ -24,7 +24,7 @@ test('opens an accepted historical revision and labels the PDF revision', async 
   await expect(page.getByRole('heading', { name: 'Startup project' })).toBeVisible();
   const result = page.getByRole('button', { name: 'Лише PDF', exact: true });
   if ((await result.getAttribute('aria-pressed')) === 'false') await result.click();
-  await expect(page.getByText('PDF версії 2.', { exact: false })).toBeVisible();
+  await expect(page.getByLabel('Текст сторінки')).toHaveText('Startup PDF');
   expect(ensureCalls).toBe(0);
 });
 

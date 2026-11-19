@@ -8,7 +8,7 @@ import {
   ref,
   watch,
 } from 'vue';
-import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute } from 'vue-router';
+import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vue-router';
 import { identitySession } from '../identity/identity-session';
 import { createResourceApi, createWorkspaceApi } from './workspace-api';
 import { createWorkspaceModel, workspaceError } from './workspace-model';
@@ -33,12 +33,15 @@ import { compilationRetryLabels, createCompilationModel } from './compilation-mo
 import { createHistoryApi } from './history-api';
 import WorkspaceOutput from './WorkspaceOutput.vue';
 import WorkspaceDiagnostics from './WorkspaceDiagnostics.vue';
+import WorkspaceRestoreStatus from './WorkspaceRestoreStatus.vue';
+import WorkspaceTabs from './WorkspaceTabs.vue';
 import FileAddMenu from './FileAddMenu.vue';
 import { openPdfTab } from './pdf-tab';
 import './workspace.css';
 
 const WorkspaceHistory = defineAsyncComponent(() => import('./WorkspaceHistory.vue'));
 const route = useRoute();
+const router = useRouter();
 const projectId = Number(route.params.projectId);
 const ownerId = identitySession.user.value!.id;
 const model = createWorkspaceModel(projectId, createWorkspaceApi(identitySession.request));
@@ -58,6 +61,13 @@ const restoreError = ref(
 );
 const restoreNotice = ref(
   recoveredRestore?.result ? `Створено версію ${recoveredRestore.result.revisionNumber}.` : '',
+);
+const restoreRetryLabel = computed(() =>
+  restoreAttempt.value
+    ? restoreAttempt.value.result
+      ? 'Оновити файли'
+      : 'Повторити відновлення'
+    : undefined,
 );
 const canRestore = computed(
   () =>
@@ -95,7 +105,11 @@ const canCompile = computed(
 );
 const resourceApi = createResourceApi(identitySession.request);
 const resourceController = new AbortController();
-const contextOpen = ref(false);
+type TabId = number | 'context';
+const tabIds = ref<TabId[]>([]);
+const activeTab = ref<TabId | null>(null);
+const contextOpen = computed(() => activeTab.value === 'context');
+const hasFileTab = computed(() => typeof activeTab.value === 'number');
 const contextInput = ref<HTMLTextAreaElement | null>(null);
 const resourceAction = ref<{ path?: string; fileId?: number } | null>(null);
 const resourceBusy = ref(false);
@@ -178,7 +192,12 @@ async function retryRestore() {
   }
 }
 
-watch(historyOpen, (open) => {
+function closeHistory() {
+  if (router.options.history.state.back === workspacePath) router.back();
+  else void router.replace(workspacePath);
+}
+
+watch(historyOpen, async (open) => {
   if (open) {
     mobileFilesVisible.value = false;
     fileMenuOpen.value = false;
@@ -188,6 +207,9 @@ watch(historyOpen, (open) => {
   } else {
     if (!restoreLocked.value) restoreError.value = '';
     if (workspaceLoaded) initializeWorkspaceOutput();
+    await nextTick();
+    if (document.activeElement === document.body || document.activeElement?.id === 'main-content')
+      document.getElementById('workspace-history-link')?.focus({ preventScroll: true });
   }
 });
 
@@ -217,12 +239,10 @@ watch([() => state.compilationRevision, () => state.status, canCompile], () => {
   startCompilation(revision);
 });
 
-async function toggleContext() {
-  contextOpen.value = !contextOpen.value;
-  if (contextOpen.value) {
-    await nextTick();
-    if (!isMobile.value) contextInput.value?.focus();
-  }
+async function openContext() {
+  await activateTab('context');
+  await nextTick();
+  if (contextOpen.value && !isMobile.value) contextInput.value?.focus({ preventScroll: true });
 }
 function openResource(replace: boolean) {
   if (actionsDisabled.value || state.status === 'saving') return;
@@ -281,7 +301,7 @@ async function submitResource(input: { file: File; path: string }) {
         : { type: 'replaceFile', fileId: action.fileId, uploadId: upload.uploadId };
     resourceAttempted.value = true;
     if (await model.mutate([operation])) {
-      contextOpen.value = false;
+      if (action.fileId === undefined) showTab(state.selectedId);
       resourceAction.value = null;
     } else if (state.status === 'conflict') resourceAction.value = null;
     else if (!state.structure.length && !state.pending) stagedResource = null;
@@ -306,7 +326,7 @@ async function retryResource() {
     await model.save();
     if (state.status === 'conflict') resourceAction.value = null;
     else if (!state.pending && !state.structure.length && state.status !== 'failed') {
-      contextOpen.value = false;
+      if (resourceAction.value?.fileId === undefined) showTab(state.selectedId);
       resourceAction.value = null;
     } else if (!state.pending && !state.structure.length) stagedResource = null;
   } finally {
@@ -438,6 +458,7 @@ async function submitFileAction(input: { path?: string; replacementId?: number }
   submittingFileAction.value = true;
   try {
     fileActionSucceeded = await model.mutate(operations);
+    if (fileActionSucceeded && action.kind === 'create') showTab(state.selectedId);
     if (fileActionSucceeded || state.status === 'conflict') fileAction.value = null;
   } finally {
     submittingFileAction.value = false;
@@ -449,6 +470,7 @@ async function retryFileAction() {
   try {
     await model.save();
     if (!state.pending && !state.structure.length) {
+      if (fileAction.value?.kind === 'create') showTab(state.selectedId);
       fileActionSucceeded = true;
       fileAction.value = null;
     } else if (state.status === 'conflict') fileAction.value = null;
@@ -524,17 +546,99 @@ function viewportChanged(event: MediaQueryListEvent) {
   isMobile.value = event.matches;
   mobileFilesVisible.value = false;
 }
+const tabs = computed(() => {
+  const files = new Map(state.snapshot?.tree.map((file) => [file.fileId, file]));
+  return tabIds.value.flatMap(
+    (id): { id: TabId; label: string; title?: string; dirty: boolean }[] => {
+      if (id === 'context')
+        return [
+          { id, label: 'Контекст', dirty: state.contextText !== state.snapshot?.contextText },
+        ];
+      const file = files.get(id);
+      if (!file) return [];
+      return [
+        {
+          id,
+          label: file.path.split('/').at(-1)!,
+          title: file.path,
+          dirty: dirtyIds.value.includes(id),
+        },
+      ];
+    },
+  );
+});
+
+function showTab(id: TabId) {
+  if (!tabIds.value.includes(id)) tabIds.value = [...tabIds.value, id];
+  activeTab.value = id;
+}
+
+async function activateTab(id: TabId) {
+  if (id !== 'context' && !state.snapshot?.tree.some((file) => file.fileId === id)) return;
+  showTab(id);
+  fileMenuOpen.value = false;
+  downloadError.value = '';
+  if (id !== 'context' && (id !== state.selectedId || state.fileError)) await model.select(id);
+}
+
+function retainTabs(remaining: TabId[], replacement?: number) {
+  const previous = tabIds.value;
+  const focusWasInTabs = !!document.activeElement?.closest('.workspace-tabs');
+  tabIds.value = remaining;
+  const current = activeTab.value;
+  if (current !== null && !remaining.includes(current)) {
+    const next = previous.slice(previous.indexOf(current) + 1).find((id) => remaining.includes(id));
+    const fallback = next ?? remaining.at(-1) ?? replacement;
+    if (fallback === undefined) activeTab.value = null;
+    else void activateTab(fallback);
+  }
+  if (focusWasInTabs)
+    void nextTick(() => {
+      const target = document.getElementById(`workspace-tab-${activeTab.value}`);
+      (target ?? document.querySelector<HTMLElement>('.editor-files-toggle'))?.focus();
+    });
+}
+
+function closeTab(id: TabId) {
+  retainTabs(tabIds.value.filter((tab) => tab !== id));
+}
+function closeOtherTabs(id: TabId) {
+  retainTabs(tabIds.value.filter((tab) => tab === id));
+}
+function closeTabsToRight(id: TabId) {
+  const index = tabIds.value.indexOf(id);
+  if (index >= 0) retainTabs(tabIds.value.slice(0, index + 1));
+}
+function moveTab(id: TabId, index: number) {
+  const from = tabIds.value.indexOf(id);
+  if (from === index || from < 0 || index < 0 || index >= tabIds.value.length) return;
+  const ordered = [...tabIds.value];
+  ordered.splice(from, 1);
+  ordered.splice(index, 0, id);
+  tabIds.value = ordered;
+}
+
+watch(
+  () => state.snapshot?.tree,
+  (tree) => {
+    if (!tree) return;
+    const valid = new Set(tree.map((file) => file.fileId));
+    const remaining = tabIds.value.filter((id) => id === 'context' || valid.has(id));
+    if (remaining.length !== tabIds.value.length) {
+      const replacement = valid.has(state.selectedId)
+        ? state.selectedId
+        : state.snapshot?.mainFileId;
+      retainTabs(remaining, replacement);
+    }
+  },
+);
+
 async function selectFile(fileId: number) {
   if (onlyOutput.value) viewMode.value = canSplit.value ? 'split' : 'code';
-  contextOpen.value = false;
-  downloadError.value = '';
-  fileMenuOpen.value = false;
-  await model.select(fileId);
+  await activateTab(fileId);
+  if (activeTab.value !== fileId) return;
   if (isMobile.value) mobileFilesVisible.value = false;
-  else {
-    await nextTick();
-    editor.value?.focus();
-  }
+  else await nextTick(() => editor.value?.focus());
 }
 const selectedMeta = computed(() =>
   state.snapshot?.tree.find((f) => f.fileId === state.selectedId),
@@ -624,6 +728,7 @@ function initializeWorkspaceOutput() {
 async function loadWorkspace() {
   await model.load(takeWorkspaceRecovery(ownerId, projectId));
   if (restoreController.signal.aborted || !state.snapshot || state.error) return;
+  showTab(state.selectedId);
   workspaceLoaded = true;
   initializeWorkspaceOutput();
   if (historyOpen.value) void refreshHistoryHead();
@@ -658,12 +763,9 @@ onBeforeUnmount(() => {
       <button class="button button-secondary" @click="loadWorkspace">Повторити</button>
     </div>
     <template v-else-if="state.snapshot">
-      <div
-        class="editor-heading"
-        :class="{ 'editor-heading-commands': !historyOpen && !state.conflict }"
-      >
+      <div class="editor-heading" :class="{ 'editor-heading-commands': !state.conflict }">
         <button
-          v-if="!state.conflict && !historyOpen && !onlyOutput"
+          v-if="!state.conflict && !onlyOutput"
           class="editor-files-toggle"
           :aria-expanded="filesVisible"
           :aria-controls="isMobile ? undefined : 'workspace-files'"
@@ -691,27 +793,20 @@ onBeforeUnmount(() => {
             >{{ labels[state.status] }}</span
           >
           <button
-            v-if="!state.conflict && !historyOpen && !onlyOutput"
-            class="button button-quiet workspace-context-toggle"
-            :aria-pressed="contextOpen"
-            aria-controls="workspace-context"
-            @click="toggleContext"
+            v-if="!state.conflict && !onlyOutput"
+            type="button"
+            class="button button-quiet workspace-context-command"
+            @click="openContext"
           >
             Контекст
           </button>
           <RouterLink
-            v-if="historyOpen"
-            :to="workspacePath"
-            class="button button-quiet workspace-context-toggle"
-            aria-label="Повернутися до редактора"
-            title="Повернутися до редактора"
-            >← До редактора</RouterLink
-          >
-          <RouterLink
-            v-else-if="!state.conflict"
+            v-if="!state.conflict"
+            id="workspace-history-link"
             :to="`${workspacePath}/history`"
             class="file-icon-button workspace-history-link"
             aria-label="Історія версій"
+            aria-haspopup="dialog"
             title="Історія версій"
           >
             <svg
@@ -725,7 +820,7 @@ onBeforeUnmount(() => {
             </svg>
           </RouterLink>
         </div>
-        <div v-if="!historyOpen && !state.conflict" class="workspace-command-bar">
+        <div v-if="!state.conflict" class="workspace-command-bar">
           <button
             type="button"
             class="file-icon-button"
@@ -832,24 +927,15 @@ onBeforeUnmount(() => {
           {{ compilationRetryLabels[compilation.state.retry] }}
         </button>
       </div>
-      <div
-        v-if="restoreError || restoring"
-        class="editor-notice"
-        :role="restoreError ? 'alert' : 'status'"
-      >
-        <p>{{ restoring ? 'Відновлення версії…' : restoreError }}</p>
-        <button
-          v-if="restoreAttempt && !restoring"
-          class="button button-secondary"
-          :disabled="atRisk"
-          @click="retryRestore"
-        >
-          {{ restoreAttempt.result ? 'Оновити файли' : 'Повторити відновлення' }}
-        </button>
-      </div>
-      <p v-else-if="restoreNotice" class="workspace-restore-notice" role="status">
-        {{ restoreNotice }}
-      </p>
+      <WorkspaceRestoreStatus
+        v-if="!historyOpen || state.conflict"
+        :error="restoreError"
+        :notice="restoreNotice"
+        :restoring="restoring"
+        :retry-label="restoreRetryLabel"
+        :retry-disabled="atRisk"
+        @retry="retryRestore"
+      />
       <div v-if="state.saveError && !state.conflict" class="editor-notice" role="alert">
         <div class="editor-notice-detail">
           <p>{{ state.saveError }}</p>
@@ -974,12 +1060,23 @@ onBeforeUnmount(() => {
         :head-id="state.snapshot.revision.id"
         :can-restore="canRestore"
         :busy="restoring"
+        @dismiss="closeHistory"
         @restore="restoreVersion"
         @refresh="refreshHistoryHead"
-      />
+      >
+        <template v-if="restoreError || restoring || restoreNotice" #status>
+          <WorkspaceRestoreStatus
+            :error="restoreError"
+            :notice="restoreNotice"
+            :restoring="restoring"
+            :retry-label="restoreRetryLabel"
+            :retry-disabled="atRisk"
+            @retry="retryRestore"
+          />
+        </template>
+      </WorkspaceHistory>
       <div
         v-if="!state.conflict"
-        v-show="!historyOpen"
         class="editor-layout"
         :class="{
           'editor-without-files': isMobile || !filesVisible || onlyOutput,
@@ -1004,7 +1101,7 @@ onBeforeUnmount(() => {
           </div>
           <WorkspaceFiles
             :files="state.snapshot.tree"
-            :selected-id="state.selectedId"
+            :selected-id="hasFileTab ? state.selectedId : 0"
             :dirty-ids="dirtyIds"
             :collapsed-paths="collapsedPaths"
             :main-file-id="state.snapshot.mainFileId"
@@ -1013,25 +1110,19 @@ onBeforeUnmount(() => {
           />
         </aside>
         <section v-show="!onlyOutput" class="editor-source" aria-label="Редактор файла">
-          <div v-show="!contextOpen" class="editor-file-bar">
-            <h2>
-              <svg
-                viewBox="0 0 16 16"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.2"
-                aria-hidden="true"
-              >
-                <path d="M4 2h5l3 3v9H4zM9 2v4h3" /></svg
-              ><span :title="selectedMeta?.path">{{ selectedMeta?.path }}</span
-              ><span
-                v-if="dirtyIds.includes(state.selectedId)"
-                class="file-dirty"
-                aria-label="Незбережені зміни"
-                >●</span
-              >
-            </h2>
+          <div class="editor-file-bar">
+            <WorkspaceTabs
+              :tabs="tabs"
+              :active-id="activeTab"
+              @select="activateTab"
+              @close="closeTab"
+              @close-others="closeOtherTabs"
+              @close-right="closeTabsToRight"
+              @close-all="retainTabs([])"
+              @move="moveTab"
+            />
             <div
+              v-if="hasFileTab"
               ref="fileMenuHost"
               class="file-menu-host"
               @keydown.esc.stop.prevent="escapeFileMenu"
@@ -1085,75 +1176,85 @@ onBeforeUnmount(() => {
               </div>
             </div>
           </div>
-          <section v-show="contextOpen" id="workspace-context" class="workspace-context">
-            <label for="project-context-input">Контекст проєкту</label>
-            <textarea
-              id="project-context-input"
-              ref="contextInput"
-              :value="state.contextText"
-              :readonly="state.conflictLoading || restoreLocked"
-              placeholder="Вимоги, домовленості та примітки до документа"
-              @input="model.editContext(($event.target as HTMLTextAreaElement).value)"
-              @keydown.ctrl.s.prevent="model.save()"
-              @keydown.meta.s.prevent="model.save()"
-              @compositionstart="model.composition(true)"
-              @compositionend="model.composition(false)"
-              @blur="model.composition(false)"
-            />
-          </section>
-          <p v-if="!contextOpen && state.fileLoading" role="status" class="editor-file-message">
-            Завантаження файла…
-          </p>
-          <div v-else-if="!contextOpen && state.fileError" role="alert" class="editor-file-message">
-            <p>{{ state.fileError }}</p>
-            <button class="button button-secondary" @click="model.select(state.selectedId)">
-              Повторити завантаження
-            </button>
-          </div>
           <div
-            v-else-if="!contextOpen && selectedMeta?.contentKind === 'binary'"
-            class="editor-file-message"
+            id="workspace-tab-panel"
+            class="workspace-tab-panel"
+            :role="activeTab === null ? undefined : 'tabpanel'"
+            :aria-labelledby="activeTab === null ? undefined : `workspace-tab-${activeTab}`"
           >
-            <p>Цей файл не містить редагованого тексту.</p>
-            <button
-              class="button button-secondary"
-              :disabled="downloading"
-              @click="downloadResource"
+            <section v-show="contextOpen" class="workspace-context">
+              <label for="project-context-input">Контекст проєкту</label>
+              <textarea
+                id="project-context-input"
+                ref="contextInput"
+                :value="state.contextText"
+                :readonly="state.conflictLoading || restoreLocked"
+                placeholder="Вимоги, домовленості та примітки до документа"
+                @input="model.editContext(($event.target as HTMLTextAreaElement).value)"
+                @keydown.ctrl.s.prevent="model.save()"
+                @keydown.meta.s.prevent="model.save()"
+                @compositionstart="model.composition(true)"
+                @compositionend="model.composition(false)"
+                @blur="model.composition(false)"
+              />
+            </section>
+            <p v-if="activeTab === null" class="editor-file-message">Виберіть файл у дереві.</p>
+            <p
+              v-else-if="hasFileTab && state.fileLoading"
+              role="status"
+              class="editor-file-message"
             >
-              {{ downloading ? 'Скачуємо…' : 'Скачати файл' }}
-            </button>
-            <p v-if="downloadError" role="alert" class="field-error">{{ downloadError }}</p>
+              Завантаження файла…
+            </p>
+            <div v-else-if="hasFileTab && state.fileError" role="alert" class="editor-file-message">
+              <p>{{ state.fileError }}</p>
+              <button class="button button-secondary" @click="model.select(state.selectedId)">
+                Повторити завантаження
+              </button>
+            </div>
+            <div
+              v-else-if="hasFileTab && selectedMeta?.contentKind === 'binary'"
+              class="editor-file-message"
+            >
+              <p>Цей файл не містить редагованого тексту.</p>
+              <button
+                class="button button-secondary"
+                :disabled="downloading"
+                @click="downloadResource"
+              >
+                {{ downloading ? 'Скачуємо…' : 'Скачати файл' }}
+              </button>
+              <p v-if="downloadError" role="alert" class="field-error">{{ downloadError }}</p>
+            </div>
+            <TextEditor
+              v-show="
+                hasFileTab &&
+                selected &&
+                !state.fileLoading &&
+                !state.fileError &&
+                selectedMeta?.contentKind === 'text'
+              "
+              ref="editor"
+              :document-id="selected ? state.selectedId : 0"
+              :model-value="selected?.content ?? ''"
+              :reset-key="state.resetKey"
+              :readonly="
+                restoreLocked ||
+                state.conflictLoading ||
+                state.structure.some(
+                  (operation) =>
+                    operation.type === 'deleteFile' && operation.fileId === state.selectedId,
+                )
+              "
+              @update:model-value="(value, fileId) => model.edit(fileId, value)"
+              @save="model.save()"
+              @composition="model.composition"
+            />
           </div>
-          <TextEditor
-            v-show="
-              !contextOpen &&
-              selected &&
-              !state.fileLoading &&
-              !state.fileError &&
-              selectedMeta?.contentKind === 'text'
-            "
-            ref="editor"
-            :document-id="selected ? state.selectedId : 0"
-            :model-value="selected?.content ?? ''"
-            :reset-key="state.resetKey"
-            :readonly="
-              restoreLocked ||
-              state.conflictLoading ||
-              state.structure.some(
-                (operation) =>
-                  operation.type === 'deleteFile' && operation.fileId === state.selectedId,
-              )
-            "
-            @update:model-value="model.edit(state.selectedId, $event)"
-            @save="model.save()"
-            @composition="model.composition"
-          />
         </section>
         <WorkspaceOutput
           v-show="showOutput"
           :output="compilation.state"
-          :head-id="state.snapshot.revision.id"
-          :unsaved="atRisk"
           @retry="compilation.retry"
           @download="downloadPdf"
           @open="openPdf"
@@ -1161,7 +1262,6 @@ onBeforeUnmount(() => {
       </div>
       <WorkspaceDiagnostics
         v-if="!state.conflict"
-        v-show="!historyOpen"
         :result="compilation.state.diagnostics"
         :can-open-file="canOpenDiagnostic"
         @source="openDiagnostic"
@@ -1197,7 +1297,7 @@ onBeforeUnmount(() => {
           />
           <WorkspaceFiles
             :files="state.snapshot.tree"
-            :selected-id="state.selectedId"
+            :selected-id="hasFileTab ? state.selectedId : 0"
             :dirty-ids="dirtyIds"
             :collapsed-paths="collapsedPaths"
             :main-file-id="state.snapshot.mainFileId"

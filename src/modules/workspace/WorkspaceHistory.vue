@@ -16,6 +16,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   restore: [{ id: number; number: number; expectedHeadId: number }];
   refresh: [];
+  dismiss: [];
 }>();
 const api = createHistoryApi(identitySession.request);
 const revisions = ref<Revision[]>([]);
@@ -267,20 +268,6 @@ function toggleSnapshot() {
   else void openSnapshot();
 }
 
-function handleEscape(event: KeyboardEvent) {
-  if (restoreOpen.value || !isMobile.value) return;
-  if (snapshotOpen.value) {
-    if (mobileSnapshotFileId.value !== null) backToSnapshotFiles();
-    else closeSnapshot();
-    event.preventDefault();
-    return;
-  }
-  if (selectedId.value !== null) {
-    showList();
-    event.preventDefault();
-  }
-}
-
 function viewportChanged(event: MediaQueryListEvent) {
   isMobile.value = event.matches;
   mobileSnapshotFileId.value = null;
@@ -359,309 +346,342 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="workspace-history" aria-label="Історія версій" @keydown.esc="handleEscape">
-    <aside class="history-list" :class="{ 'history-list-hidden': selectedId !== null }">
-      <header class="history-list-heading">
-        <h2 ref="listHeading" tabindex="-1">Версії</h2>
-        <button v-if="latestDisagrees" class="button button-quiet" @click="emit('refresh')">
-          Оновити стан
-        </button>
-      </header>
-      <p v-if="latestDisagrees" class="history-inline-note" role="status">
-        Стан проєкту змінився. Оновіть його перед порівнянням.
-      </p>
-      <div v-if="loading" class="history-state" role="status">Завантаження історії…</div>
-      <div v-else-if="error" class="history-state" role="alert">
-        <p>{{ error }}</p>
-        <button class="button button-secondary" @click="loadPage()">Повторити</button>
-      </div>
-      <p v-else-if="!revisions.length" class="history-state">Історія поки порожня.</p>
-      <ul v-else class="history-revision-list">
-        <li v-for="revision in revisions" :key="revision.id">
-          <button
-            class="history-revision"
-            :class="{
-              'history-revision-selected': revision.id === selectedId,
-              'history-revision-current': revision.id === props.headId,
-            }"
-            :aria-current="revision.id === selectedId ? 'true' : undefined"
-            :disabled="loading"
-            @click="select(revision.id)"
-          >
-            <span class="history-revision-top"
-              ><strong>Версія {{ revision.number }}</strong
-              ><span v-if="revision.id === props.headId">Поточна</span></span
-            >
-            <span class="history-revision-summary">{{ revisionTitle(revision) }}</span>
-            <span class="history-revision-meta">{{ dateLabel(revision.createdAt) }}</span>
+  <ModalDialog
+    :open="true"
+    title="Історія версій"
+    dialog-class="history-modal"
+    :busy="busy"
+    @dismiss="emit('dismiss')"
+  >
+    <button
+      class="history-close button button-quiet"
+      type="button"
+      aria-label="Закрити історію"
+      :disabled="busy"
+      @click="emit('dismiss')"
+    >
+      <svg aria-hidden="true" viewBox="0 0 20 20" width="20" height="20">
+        <path d="m5 5 10 10M15 5 5 15" fill="none" stroke="currentColor" stroke-width="1.8" />
+      </svg>
+    </button>
+    <div v-if="$slots.status" class="history-status">
+      <slot name="status" />
+    </div>
+    <section class="workspace-history" aria-label="Історія версій">
+      <aside class="history-list" :class="{ 'history-list-hidden': selectedId !== null }">
+        <header class="history-list-heading">
+          <h2 ref="listHeading" tabindex="-1">Версії</h2>
+          <button v-if="latestDisagrees" class="button button-quiet" @click="emit('refresh')">
+            Оновити стан
           </button>
-        </li>
-      </ul>
-      <button
-        v-if="nextCursor !== null"
-        class="button button-quiet history-more"
-        :disabled="loadingMore"
-        @click="loadPage(nextCursor, true)"
-      >
-        {{ loadingMore ? 'Завантаження…' : 'Завантажити раніші версії' }}
-      </button>
-      <div v-if="moreError" class="history-state" role="alert">
-        <p>{{ moreError }}</p>
-        <button class="button button-secondary" @click="loadPage(nextCursor ?? undefined, true)">
-          Повторити
-        </button>
-      </div>
-    </aside>
-
-    <div class="history-detail" :class="{ 'history-detail-snapshot': snapshotOpen }">
-      <template v-if="selected">
-        <button ref="detailBack" class="button button-quiet history-back" @click="showList">
-          ← Усі версії
-        </button>
-        <header class="history-detail-heading">
-          <div>
-            <h2>
-              {{
-                selected.id === props.headId
-                  ? `Версія ${selected.number}`
-                  : `Версія ${selected.number} → Поточна`
-              }}
-            </h2>
-            <p>{{ dateLabel(selected.createdAt) }} · {{ revisionTitle(selected) }}</p>
-          </div>
-          <div class="history-detail-actions">
-            <button
-              ref="snapshotToggle"
-              class="button button-quiet"
-              :aria-pressed="snapshotOpen"
-              @click="toggleSnapshot"
-            >
-              {{ snapshotOpen ? 'До порівняння' : 'Файли версії' }}
-            </button>
-            <button
-              v-if="selected.id !== props.headId"
-              class="button button-secondary history-restore-button"
-              :disabled="!canConfirmRestore"
-              @click="restoreOpen = true"
-            >
-              Відновити версію
-            </button>
-          </div>
         </header>
-        <div v-if="snapshotOpen" class="history-snapshot-browser">
-          <button
-            v-if="isMobile && mobileSnapshotFileId === null"
-            class="button button-quiet history-back history-snapshot-return"
-            @click="closeSnapshot"
-          >
-            ← До порівняння
-          </button>
-          <div
-            class="history-snapshot-files"
-            :class="{ 'history-snapshot-files-hidden': mobileSnapshotFileId !== null }"
-          >
-            <h3 ref="snapshotListHeading" tabindex="-1">Файли версії {{ selected.number }}</h3>
-            <div v-if="snapshotLoading" class="history-state" role="status">
-              Завантаження файлів…
-            </div>
-            <div v-else-if="snapshotError" class="history-state" role="alert">
-              <p>{{ snapshotError }}</p>
-              <button class="button button-secondary" @click="openSnapshot">Повторити</button>
-            </div>
-            <ul v-else-if="snapshot" class="history-snapshot-list">
-              <li v-for="file in snapshot.tree" :key="file.fileId">
-                <button
-                  class="history-snapshot-file"
-                  :class="{ 'history-snapshot-file-selected': file.fileId === snapshotFileId }"
-                  :aria-current="file.fileId === snapshotFileId ? 'true' : undefined"
-                  @click="selectSnapshotFile(file.fileId)"
-                >
-                  <span>{{ file.path }}</span>
-                  <small>{{
-                    file.contentKind === 'text'
-                      ? file.fileId === snapshot.mainFileId
-                        ? 'Головний'
-                        : 'Текст'
-                      : 'Ресурс'
-                  }}</small>
-                </button>
-              </li>
-            </ul>
-          </div>
-          <section
-            v-if="snapshot && (!isMobile || mobileSnapshotFileId !== null)"
-            class="history-snapshot-content"
-          >
-            <button
-              v-if="isMobile"
-              ref="snapshotBack"
-              class="button button-quiet history-back"
-              @click="backToSnapshotFiles"
-            >
-              ← Файли версії
-            </button>
-            <template v-if="snapshotFile">
-              <header class="history-snapshot-file-heading">
-                <h3>{{ snapshotFile.path }}</h3>
-                <span>{{ snapshotFile.contentKind === 'text' ? 'Текст' : 'Ресурс' }}</span>
-              </header>
-              <p v-if="snapshotFile.fileId === snapshot.mainFileId" class="history-snapshot-meta">
-                Головний файл · {{ formatBytes(snapshotFile.sizeBytes) }}
-              </p>
-              <p v-else class="history-snapshot-meta">
-                {{ formatBytes(snapshotFile.sizeBytes) }} · {{ snapshotFile.mediaType }}
-              </p>
-              <div v-if="snapshotTextLoading" class="history-state" role="status">
-                Завантаження тексту…
-              </div>
-              <div v-else-if="snapshotTextError" class="history-state" role="alert">
-                <p>{{ snapshotTextError }}</p>
-                <button
-                  class="button button-secondary"
-                  @click="selectSnapshotFile(snapshotFile.fileId)"
-                >
-                  Повторити
-                </button>
-              </div>
-              <pre
-                v-else-if="snapshotText"
-                class="history-snapshot-text"
-              ><code>{{ snapshotText.content }}</code></pre>
-            </template>
-            <p v-else class="history-state">Виберіть файл версії.</p>
-          </section>
+        <p v-if="latestDisagrees" class="history-inline-note" role="status">
+          Стан проєкту змінився. Оновіть його перед порівнянням.
+        </p>
+        <div v-if="loading" class="history-state" role="status">Завантаження історії…</div>
+        <div v-else-if="error" class="history-state" role="alert">
+          <p>{{ error }}</p>
+          <button class="button button-secondary" @click="loadPage()">Повторити</button>
         </div>
-        <template v-else>
-          <p v-if="selected.id === props.headId" class="history-state">У цих версіях немає змін.</p>
-          <div v-else-if="diffError" class="history-state" role="alert">
-            <p>{{ diffError }}</p>
-            <button class="button button-secondary" @click="select(selected.id)">
-              Повторити порівняння
-            </button>
-          </div>
-          <p v-else-if="!diff" class="history-state" role="status">Завантаження порівняння…</p>
-          <template v-else>
-            <section v-if="diff.files.length" class="history-change-list" aria-label="Зміни файлів">
-              <details
-                v-for="file in diff.files"
-                :key="file.fileId"
-                class="history-change history-diff-group"
+        <p v-else-if="!revisions.length" class="history-state">Історія поки порожня.</p>
+        <ul v-else class="history-revision-list">
+          <li v-for="revision in revisions" :key="revision.id">
+            <button
+              class="history-revision"
+              :class="{
+                'history-revision-selected': revision.id === selectedId,
+                'history-revision-current': revision.id === props.headId,
+              }"
+              :aria-current="revision.id === selectedId ? 'true' : undefined"
+              :disabled="loading"
+              @click="select(revision.id)"
+            >
+              <span class="history-revision-top"
+                ><strong>Версія {{ revision.number }}</strong
+                ><span v-if="revision.id === props.headId">Поточна</span></span
               >
-                <summary class="history-change-heading">
-                  <h3>{{ file.before?.path ?? file.after?.path }}</h3>
-                  <span>{{
-                    file.changes
-                      .map(
-                        (change) =>
-                          ({
-                            renamed: 'Перейменовано',
-                            modified: 'Змінено',
-                            added: 'Додано',
-                            deleted: 'Видалено',
-                          })[change],
-                      )
-                      .join(' · ')
-                  }}</span>
-                </summary>
-                <p
-                  v-if="file.before?.path !== file.after?.path && file.before && file.after"
-                  class="history-path-change"
-                >
-                  {{ file.before.path }} → {{ file.after.path }}
-                </p>
-                <p
-                  v-if="
-                    file.before?.contentKind === 'binary' || file.after?.contentKind === 'binary'
-                  "
-                  class="history-file-size"
-                >
-                  {{ file.before ? formatBytes(file.before.sizeBytes) : '—' }} →
-                  {{ file.after ? formatBytes(file.after.sizeBytes) : '—' }}
-                </p>
-                <template v-if="file.patch">
-                  <pre
-                    class="history-patch"
-                  ><code><span v-for="(line, index) in displayedLines(file.patch, expandedFiles.has(file.fileId)).lines" :key="index" :class="`history-line-${line.kind}`">{{ line.line }}
-</span></code></pre>
+              <span class="history-revision-summary">{{ revisionTitle(revision) }}</span>
+              <span class="history-revision-meta">{{ dateLabel(revision.createdAt) }}</span>
+            </button>
+          </li>
+        </ul>
+        <button
+          v-if="nextCursor !== null"
+          class="button button-quiet history-more"
+          :disabled="loadingMore"
+          @click="loadPage(nextCursor, true)"
+        >
+          {{ loadingMore ? 'Завантаження…' : 'Завантажити раніші версії' }}
+        </button>
+        <div v-if="moreError" class="history-state" role="alert">
+          <p>{{ moreError }}</p>
+          <button class="button button-secondary" @click="loadPage(nextCursor ?? undefined, true)">
+            Повторити
+          </button>
+        </div>
+      </aside>
+
+      <div class="history-detail" :class="{ 'history-detail-snapshot': snapshotOpen }">
+        <template v-if="selected">
+          <button ref="detailBack" class="button button-quiet history-back" @click="showList">
+            ← Усі версії
+          </button>
+          <header class="history-detail-heading">
+            <div>
+              <h2>
+                {{
+                  selected.id === props.headId
+                    ? `Версія ${selected.number}`
+                    : `Версія ${selected.number} → Поточна`
+                }}
+              </h2>
+              <p>{{ dateLabel(selected.createdAt) }} · {{ revisionTitle(selected) }}</p>
+            </div>
+            <div class="history-detail-actions">
+              <button
+                ref="snapshotToggle"
+                class="button button-quiet"
+                :aria-pressed="snapshotOpen"
+                @click="toggleSnapshot"
+              >
+                {{ snapshotOpen ? 'До порівняння' : 'Файли версії' }}
+              </button>
+              <button
+                v-if="selected.id !== props.headId"
+                class="button button-secondary history-restore-button"
+                :disabled="!canConfirmRestore"
+                @click="restoreOpen = true"
+              >
+                Відновити версію
+              </button>
+            </div>
+          </header>
+          <div v-if="snapshotOpen" class="history-snapshot-browser">
+            <button
+              v-if="isMobile && mobileSnapshotFileId === null"
+              class="button button-quiet history-back history-snapshot-return"
+              @click="closeSnapshot"
+            >
+              ← До порівняння
+            </button>
+            <div
+              class="history-snapshot-files"
+              :class="{ 'history-snapshot-files-hidden': mobileSnapshotFileId !== null }"
+            >
+              <h3 ref="snapshotListHeading" tabindex="-1">Файли версії {{ selected.number }}</h3>
+              <div v-if="snapshotLoading" class="history-state" role="status">
+                Завантаження файлів…
+              </div>
+              <div v-else-if="snapshotError" class="history-state" role="alert">
+                <p>{{ snapshotError }}</p>
+                <button class="button button-secondary" @click="openSnapshot">Повторити</button>
+              </div>
+              <ul v-else-if="snapshot" class="history-snapshot-list">
+                <li v-for="file in snapshot.tree" :key="file.fileId">
                   <button
-                    v-if="displayedLines(file.patch, false).hasMore"
-                    class="button button-quiet history-expand-patch"
-                    @click.prevent="
-                      expandedFiles.has(file.fileId)
-                        ? expandedFiles.delete(file.fileId)
-                        : expandedFiles.add(file.fileId)
-                    "
+                    class="history-snapshot-file"
+                    :class="{ 'history-snapshot-file-selected': file.fileId === snapshotFileId }"
+                    :aria-current="file.fileId === snapshotFileId ? 'true' : undefined"
+                    @click="selectSnapshotFile(file.fileId)"
                   >
-                    {{ expandedFiles.has(file.fileId) ? 'Згорнути зміни' : 'Показати решту змін' }}
+                    <span>{{ file.path }}</span>
+                    <small>{{
+                      file.contentKind === 'text'
+                        ? file.fileId === snapshot.mainFileId
+                          ? 'Головний'
+                          : 'Текст'
+                        : 'Ресурс'
+                    }}</small>
                   </button>
-                </template>
-                <p v-else class="history-omitted">{{ omittedReason(file.patchOmittedReason) }}</p>
-              </details>
+                </li>
+              </ul>
+            </div>
+            <section
+              v-if="snapshot && (!isMobile || mobileSnapshotFileId !== null)"
+              class="history-snapshot-content"
+            >
+              <button
+                v-if="isMobile"
+                ref="snapshotBack"
+                class="button button-quiet history-back"
+                @click="backToSnapshotFiles"
+              >
+                ← Файли версії
+              </button>
+              <template v-if="snapshotFile">
+                <header class="history-snapshot-file-heading">
+                  <h3>{{ snapshotFile.path }}</h3>
+                  <span>{{ snapshotFile.contentKind === 'text' ? 'Текст' : 'Ресурс' }}</span>
+                </header>
+                <p v-if="snapshotFile.fileId === snapshot.mainFileId" class="history-snapshot-meta">
+                  Головний файл · {{ formatBytes(snapshotFile.sizeBytes) }}
+                </p>
+                <p v-else class="history-snapshot-meta">
+                  {{ formatBytes(snapshotFile.sizeBytes) }} · {{ snapshotFile.mediaType }}
+                </p>
+                <div v-if="snapshotTextLoading" class="history-state" role="status">
+                  Завантаження тексту…
+                </div>
+                <div v-else-if="snapshotTextError" class="history-state" role="alert">
+                  <p>{{ snapshotTextError }}</p>
+                  <button
+                    class="button button-secondary"
+                    @click="selectSnapshotFile(snapshotFile.fileId)"
+                  >
+                    Повторити
+                  </button>
+                </div>
+                <pre
+                  v-else-if="snapshotText"
+                  class="history-snapshot-text"
+                ><code>{{ snapshotText.content }}</code></pre>
+              </template>
+              <p v-else class="history-state">Виберіть файл версії.</p>
             </section>
-            <p v-else-if="!diff.context.changed && !diff.entrypoint.changed" class="history-state">
+          </div>
+          <template v-else>
+            <p v-if="selected.id === props.headId" class="history-state">
               У цих версіях немає змін.
             </p>
-            <details v-if="diff.context.changed" class="history-change history-diff-group">
-              <summary class="history-change-heading">
-                <h3>Контекст проєкту</h3>
-                <span>Змінено</span>
-              </summary>
-              <template v-if="diff.context.patch">
-                <pre
-                  class="history-patch"
-                ><code><span v-for="(line, index) in displayedLines(diff.context.patch, expandedContext).lines" :key="index" :class="`history-line-${line.kind}`">{{ line.line }}
-</span></code></pre>
-                <button
-                  v-if="displayedLines(diff.context.patch, false).hasMore"
-                  class="button button-quiet history-expand-patch"
-                  @click.prevent="expandedContext = !expandedContext"
+            <div v-else-if="diffError" class="history-state" role="alert">
+              <p>{{ diffError }}</p>
+              <button class="button button-secondary" @click="select(selected.id)">
+                Повторити порівняння
+              </button>
+            </div>
+            <p v-else-if="!diff" class="history-state" role="status">Завантаження порівняння…</p>
+            <template v-else>
+              <section
+                v-if="diff.files.length"
+                class="history-change-list"
+                aria-label="Зміни файлів"
+              >
+                <details
+                  v-for="file in diff.files"
+                  :key="file.fileId"
+                  class="history-change history-diff-group"
                 >
-                  {{ expandedContext ? 'Згорнути зміни' : 'Показати решту змін' }}
-                </button>
-              </template>
-              <p v-else class="history-omitted">
-                {{ omittedReason(diff.context.patchOmittedReason) }}
+                  <summary class="history-change-heading">
+                    <h3>{{ file.before?.path ?? file.after?.path }}</h3>
+                    <span>{{
+                      file.changes
+                        .map(
+                          (change) =>
+                            ({
+                              renamed: 'Перейменовано',
+                              modified: 'Змінено',
+                              added: 'Додано',
+                              deleted: 'Видалено',
+                            })[change],
+                        )
+                        .join(' · ')
+                    }}</span>
+                  </summary>
+                  <p
+                    v-if="file.before?.path !== file.after?.path && file.before && file.after"
+                    class="history-path-change"
+                  >
+                    {{ file.before.path }} → {{ file.after.path }}
+                  </p>
+                  <p
+                    v-if="
+                      file.before?.contentKind === 'binary' || file.after?.contentKind === 'binary'
+                    "
+                    class="history-file-size"
+                  >
+                    {{ file.before ? formatBytes(file.before.sizeBytes) : '—' }} →
+                    {{ file.after ? formatBytes(file.after.sizeBytes) : '—' }}
+                  </p>
+                  <template v-if="file.patch">
+                    <pre
+                      class="history-patch"
+                    ><code><span v-for="(line, index) in displayedLines(file.patch, expandedFiles.has(file.fileId)).lines" :key="index" :class="`history-line-${line.kind}`">{{ line.line }}
+</span></code></pre>
+                    <button
+                      v-if="displayedLines(file.patch, false).hasMore"
+                      class="button button-quiet history-expand-patch"
+                      @click.prevent="
+                        expandedFiles.has(file.fileId)
+                          ? expandedFiles.delete(file.fileId)
+                          : expandedFiles.add(file.fileId)
+                      "
+                    >
+                      {{
+                        expandedFiles.has(file.fileId) ? 'Згорнути зміни' : 'Показати решту змін'
+                      }}
+                    </button>
+                  </template>
+                  <p v-else class="history-omitted">{{ omittedReason(file.patchOmittedReason) }}</p>
+                </details>
+              </section>
+              <p
+                v-else-if="!diff.context.changed && !diff.entrypoint.changed"
+                class="history-state"
+              >
+                У цих версіях немає змін.
               </p>
-            </details>
-            <section v-if="diff.entrypoint.changed" class="history-change">
-              <h3>Головний файл</h3>
-              <p>
-                {{ fromPaths.get(diff.entrypoint.beforeFileId) ?? 'Файл недоступний' }} →
-                {{ toPaths.get(diff.entrypoint.afterFileId) ?? 'Файл недоступний' }}
-              </p>
-            </section>
+              <details v-if="diff.context.changed" class="history-change history-diff-group">
+                <summary class="history-change-heading">
+                  <h3>Контекст проєкту</h3>
+                  <span>Змінено</span>
+                </summary>
+                <template v-if="diff.context.patch">
+                  <pre
+                    class="history-patch"
+                  ><code><span v-for="(line, index) in displayedLines(diff.context.patch, expandedContext).lines" :key="index" :class="`history-line-${line.kind}`">{{ line.line }}
+</span></code></pre>
+                  <button
+                    v-if="displayedLines(diff.context.patch, false).hasMore"
+                    class="button button-quiet history-expand-patch"
+                    @click.prevent="expandedContext = !expandedContext"
+                  >
+                    {{ expandedContext ? 'Згорнути зміни' : 'Показати решту змін' }}
+                  </button>
+                </template>
+                <p v-else class="history-omitted">
+                  {{ omittedReason(diff.context.patchOmittedReason) }}
+                </p>
+              </details>
+              <section v-if="diff.entrypoint.changed" class="history-change">
+                <h3>Головний файл</h3>
+                <p>
+                  {{ fromPaths.get(diff.entrypoint.beforeFileId) ?? 'Файл недоступний' }} →
+                  {{ toPaths.get(diff.entrypoint.afterFileId) ?? 'Файл недоступний' }}
+                </p>
+              </section>
+            </template>
           </template>
         </template>
-      </template>
-      <p v-else class="history-state history-empty-detail">
-        Виберіть версію, щоб переглянути зміни.
-      </p>
-    </div>
-
-    <ModalDialog
-      :open="restoreOpen"
-      title="Відновити версію?"
-      :busy="busy"
-      @dismiss="restoreOpen = false"
-    >
-      <p>
-        Вміст усіх файлів і контексту буде замінено станом версії {{ selected?.number }}. Поточні
-        зміни залишаться в історії як окрема версія.
-      </p>
-      <div class="modal-actions">
-        <button class="button button-secondary" :disabled="busy" @click="restoreOpen = false">
-          Скасувати
-        </button>
-        <button
-          class="button button-primary"
-          :disabled="!canConfirmRestore"
-          @click="confirmRestore"
-        >
-          {{ busy ? 'Відновлення…' : 'Відновити' }}
-        </button>
+        <p v-else class="history-state history-empty-detail">
+          Виберіть версію, щоб переглянути зміни.
+        </p>
       </div>
-    </ModalDialog>
-  </section>
+
+      <ModalDialog
+        :open="restoreOpen"
+        title="Відновити версію?"
+        :busy="busy"
+        @dismiss="restoreOpen = false"
+      >
+        <p>
+          Вміст усіх файлів і контексту буде замінено станом версії {{ selected?.number }}. Поточні
+          зміни залишаться в історії як окрема версія.
+        </p>
+        <div class="modal-actions">
+          <button class="button button-secondary" :disabled="busy" @click="restoreOpen = false">
+            Скасувати
+          </button>
+          <button
+            class="button button-primary"
+            :disabled="!canConfirmRestore"
+            @click="confirmRestore"
+          >
+            {{ busy ? 'Відновлення…' : 'Відновити' }}
+          </button>
+        </div>
+      </ModalDialog>
+    </section>
+  </ModalDialog>
 </template>
 
 <style scoped>
@@ -671,6 +691,9 @@ onBeforeUnmount(() => {
   flex: 1;
   min-height: 0;
   background: var(--color-surface);
+}
+.history-status {
+  flex: 0 0 auto;
 }
 .history-list {
   min-width: 0;
@@ -1013,13 +1036,58 @@ onBeforeUnmount(() => {
   max-width: 430px;
   line-height: 1.55;
 }
+:global(.modal-dialog.history-modal[open]) {
+  display: flex;
+  flex-direction: column;
+  width: min(1120px, calc(100vw - 48px));
+  height: min(820px, calc(100dvh - 48px));
+  max-height: calc(100dvh - 48px);
+  padding: 0;
+  overflow: hidden;
+}
+:global(.history-modal > h2) {
+  display: flex;
+  align-items: center;
+  flex: 0 0 56px;
+  margin: 0;
+  padding: 0 56px 0 20px;
+  border-bottom: 1px solid var(--color-border);
+  font-size: 16px;
+}
+.history-close {
+  position: absolute;
+  z-index: 1;
+  top: 8px;
+  right: 10px;
+  display: inline-grid;
+  width: 40px;
+  height: 40px;
+  min-height: 40px;
+  place-items: center;
+  padding: 0;
+}
 @media (max-width: 720px) {
+  :global(.modal-dialog.history-modal[open]) {
+    width: 100vw;
+    height: 100dvh;
+    max-width: none;
+    max-height: none;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+  }
+  :global(.history-modal > h2) {
+    flex-basis: 52px;
+    padding-left: 16px;
+  }
   .workspace-history {
-    display: block;
+    display: flex;
+    flex-direction: column;
     overflow: hidden;
   }
   .history-list {
-    height: 100%;
+    flex: 1;
+    height: auto;
     border-right: 0;
   }
   .history-list-hidden {
@@ -1027,7 +1095,8 @@ onBeforeUnmount(() => {
   }
   .history-detail {
     display: none;
-    height: 100%;
+    flex: 1;
+    height: auto;
     padding: 10px 12px 24px;
   }
   .history-list-hidden + .history-detail {

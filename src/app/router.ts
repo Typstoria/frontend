@@ -69,7 +69,7 @@ router.beforeEach((to) => {
   }
 });
 
-router.afterEach(async (to) => {
+router.afterEach(async (to, from) => {
   const titles: Record<string, string> = {
     login: 'Вхід',
     register: 'Реєстрація',
@@ -79,6 +79,13 @@ router.afterEach(async (to) => {
   };
   const title = to.params.workspaceView === 'history' ? 'Історія версій' : to.meta.title;
   document.title = `${titles[String(to.params.flow)] ?? String(title ?? 'Документи')} · Typstoria`;
+  if (
+    to.meta.workspaceLayout &&
+    from.meta.workspaceLayout &&
+    to.params.projectId === from.params.projectId &&
+    to.params.workspaceView !== from.params.workspaceView
+  )
+    return;
   await nextTick();
   document.getElementById('main-content')?.focus({ preventScroll: true });
 });

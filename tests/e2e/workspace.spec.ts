@@ -335,6 +335,71 @@ test('restores the cursor, undo and viewport when returning to a file', async ({
   await expect(editor).not.toContainText('marker');
 });
 
+test('keeps one context tab and preserves a closed file draft and undo history', async ({
+  page,
+}) => {
+  await installSession(page);
+  await installWorkspaceApi(page);
+  await openWorkspace(page);
+
+  const editor = await sourceEditor(page);
+  const tabs = page.getByRole('tablist', { name: 'Відкриті файли', exact: true });
+  await selectFile(page, 'notes.typ');
+  await expect(tabs.getByRole('tab', { name: 'notes.typ', exact: true })).toBeVisible();
+  await editor.focus();
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+End' : 'Control+End');
+  await page.keyboard.insertText('чернетка');
+  await expect(editor.locator('.cm-line')).toHaveText(['Нотатки', 'чернетка']);
+
+  await selectFile(page, 'main.typ');
+  await expect(tabs.getByRole('tab', { name: 'main.typ', exact: true })).toBeVisible();
+  const contextCommand = page.getByRole('button', { name: 'Контекст', exact: true });
+  await contextCommand.click();
+  await contextCommand.click();
+  const contextTab = tabs.getByRole('tab', { name: 'Контекст', exact: true });
+  await expect(contextTab).toHaveAttribute('aria-selected', 'true');
+  await expect(contextTab).toHaveCount(1);
+
+  await page.route('**/api/projects/1/revisions?*', (route) =>
+    route.fulfill({ json: { items: [], nextCursor: null } }),
+  );
+  await page.getByRole('link', { name: 'Історія версій' }).click();
+  await page
+    .getByRole('dialog', { name: 'Історія версій', exact: true })
+    .getByRole('button', { name: 'Закрити історію' })
+    .click();
+  await expect(contextTab).toHaveAttribute('aria-selected', 'true');
+  await expect(tabs.getByRole('tab')).toHaveCount(3);
+
+  await tabs.getByRole('button', { name: 'Закрити notes.typ', exact: true }).click();
+  await expect(tabs.getByRole('tab', { name: /^notes\.typ/ })).toHaveCount(0);
+  await selectFile(page, 'notes.typ');
+  const notesTab = tabs.getByRole('tab', { name: /^notes\.typ/ });
+  await expect(notesTab).toBeVisible();
+  await expect(editor.locator('.cm-line')).toHaveText(['Нотатки', 'чернетка']);
+  await editor.focus();
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z');
+  await expect(editor).toContainText('Нотатки');
+  await expect(editor).not.toContainText('чернетка');
+
+  await notesTab.focus();
+  await page.keyboard.press('Alt+ArrowLeft');
+  await expect(tabs.getByRole('tab').nth(1)).toHaveAccessibleName(/^notes\.typ/);
+  if (await page.evaluate(() => matchMedia('(pointer: fine)').matches)) {
+    await notesTab.dragTo(tabs.getByRole('tab', { name: 'main.typ', exact: true }), {
+      targetPosition: { x: 8, y: 12 },
+    });
+    await expect(tabs.getByRole('tab').first()).toHaveAccessibleName(/^notes\.typ/);
+  }
+  await notesTab.focus();
+  await page.keyboard.press('Shift+F10');
+  await page.getByRole('menuitem', { name: 'Закрити всі', exact: true }).click();
+  await expect(tabs.getByRole('tab')).toHaveCount(0);
+  await expect(editor).toBeHidden();
+  await selectFile(page, 'notes.typ');
+  await expect(editor).toContainText('Нотатки');
+});
+
 test('opens a focused mobile file drawer with folders and handles selection, Escape and resizing', async ({
   page,
 }, testInfo) => {
