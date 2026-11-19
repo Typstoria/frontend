@@ -1,10 +1,11 @@
 import type { Snapshot, StructureChange } from './workspace-api';
-import { filePathError, normalizeFilePath } from './file-path';
+import { filePathError, inFolder, normalizeFilePath, projectFolders } from './file-path';
 import { matchesResourceType } from './resource-formats';
 
 // Validate the complete final tree, including an entrypoint replacement in the same batch.
 export function structureError(operations: readonly StructureChange[], snapshot: Snapshot): string {
-  const files = snapshot.tree.map((file) => ({ ...file }));
+  let files = snapshot.tree.map((file) => ({ ...file }));
+  let directories = new Set(snapshot.directories ?? []);
   let mainId = snapshot.mainFileId;
   let mainPath: string | undefined;
   let temporaryId = -1;
@@ -18,6 +19,28 @@ export function structureError(operations: readonly StructureChange[], snapshot:
         sha256: '',
         mediaType: 'text/plain',
       });
+    } else if (operation.type === 'createDirectory') {
+      directories.add(normalizeFilePath(operation.path));
+    } else if (operation.type === 'renameDirectory' || operation.type === 'deleteDirectory') {
+      const path = normalizeFilePath(operation.path);
+      const folders = projectFolders(files, [...directories]);
+      if (!folders.includes(path)) return 'Цієї папки більше немає в проєкті.';
+      const belongs = (candidate: string) => candidate === path || inFolder(candidate, path);
+      if (operation.type === 'deleteDirectory') {
+        files = files.filter((file) => !inFolder(file.path, path));
+        directories = new Set([...directories].filter((directory) => !belongs(directory)));
+      } else {
+        const destination = normalizeFilePath(operation.newPath);
+        if (destination === path) continue;
+        if (inFolder(destination, path)) return 'Папку не можна перемістити в неї саму.';
+        if (folders.includes(destination) || files.some((file) => file.path === destination))
+          return 'У цій папці вже є файл або папка з такою назвою.';
+        const move = (candidate: string) => destination + candidate.slice(path.length);
+        for (const file of files) if (inFolder(file.path, path)) file.path = move(file.path);
+        directories = new Set(
+          [...directories].map((directory) => (belongs(directory) ? move(directory) : directory)),
+        );
+      }
     } else if (operation.type === 'setEntrypoint') mainPath = normalizeFilePath(operation.path);
     else {
       const index = files.findIndex((file) => file.fileId === operation.fileId);
@@ -32,6 +55,13 @@ export function structureError(operations: readonly StructureChange[], snapshot:
     }
   }
   if (files.length > 500) return 'У проєкті може бути не більше 500 файлів.';
+  if (directories.size > 500) return 'У проєкті можна створити до 500 папок.';
+  for (const directory of directories) {
+    const error = filePathError(directory, []);
+    if (error) return error;
+    if (files.some((file) => file.path === directory || inFolder(directory, file.path)))
+      return 'Шлях конфліктує з наявним файлом або папкою.';
+  }
   for (const file of files) {
     const error = filePathError(file.path, files, file.fileId);
     if (error) return error;

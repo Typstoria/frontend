@@ -441,10 +441,12 @@ test('opens a focused mobile file drawer with folders and handles selection, Esc
   const drawer = page.getByRole('dialog', { name: 'Файли', exact: true });
   await expect(drawer).toBeVisible();
   await expect(page.getByRole('button', { name: 'Закрити файли', exact: true })).toBeFocused();
-  const addFile = drawer.getByRole('button', { name: 'Додати файл', exact: true });
+  const addFile = drawer.getByRole('button', { name: 'Додати до проєкту', exact: true });
   await addFile.focus();
   await page.keyboard.press('ArrowDown');
   await expect(drawer.getByRole('menuitem', { name: 'Створити файл' })).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await expect(drawer.getByRole('menuitem', { name: 'Створити папку' })).toBeFocused();
   await page.keyboard.press('ArrowDown');
   await expect(drawer.getByRole('menuitem', { name: 'Завантажити файл' })).toBeFocused();
   await page.keyboard.press('Escape');
@@ -454,6 +456,8 @@ test('opens a focused mobile file drawer with folders and handles selection, Esc
   const mainActions = drawer.getByRole('button', { name: 'Дії з файлом: main.typ' });
   await mainActions.click();
   await expect(drawer.getByRole('menuitem', { name: 'Перейменувати файл' })).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await expect(drawer.getByRole('menuitem', { name: 'Перемістити файл' })).toBeFocused();
   await page.keyboard.press('ArrowDown');
   await expect(drawer.getByRole('menuitem', { name: 'Видалити файл' })).toBeFocused();
   await page.keyboard.press('Escape');

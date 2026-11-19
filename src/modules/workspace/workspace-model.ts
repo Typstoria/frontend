@@ -1,6 +1,7 @@
 import { computed, reactive } from 'vue';
 import { ApiError } from '../../shared/api/client';
 import type { Changes, Snapshot, SaveResult, StructureChange, WorkspaceApi } from './workspace-api';
+import { inFolder } from './file-path';
 import { structureError } from './file-structure';
 
 type Draft = { base: string; content: string };
@@ -43,7 +44,44 @@ export function describeStructure(operation: StructureChange, files: Snapshot['t
   if (operation.type === 'deleteFile') return `Видалити ${source}`;
   if (operation.type === 'attachFile') return `Додати ${operation.path}`;
   if (operation.type === 'replaceFile') return `Замінити ${source}`;
+  if (operation.type === 'createDirectory') return `Створити папку ${operation.path}`;
+  if (operation.type === 'renameDirectory')
+    return `Перемістити папку ${operation.path} → ${operation.newPath}`;
+  if (operation.type === 'deleteDirectory') return `Видалити папку ${operation.path}`;
   return `Головний файл: ${operation.path}`;
+}
+
+function replayStructureError(
+  operations: StructureChange[],
+  previous: Snapshot,
+  current: Snapshot,
+) {
+  for (const operation of operations) {
+    if (operation.type === 'replaceFile') {
+      const before = previous.tree.find((file) => file.fileId === operation.fileId);
+      const after = current.tree.find((file) => file.fileId === operation.fileId);
+      if (before?.sha256 !== after?.sha256 || before?.path !== after?.path)
+        return 'Ресурс змінився на сервері. Перегляньте актуальний файл перед заміною.';
+    }
+    if (operation.type === 'deleteDirectory') {
+      const subtreeChanged = current.tree.some(
+        (file) =>
+          inFolder(file.path, operation.path) &&
+          !previous.tree.some(
+            (before) =>
+              before.fileId === file.fileId &&
+              before.path === file.path &&
+              before.sha256 === file.sha256,
+          ),
+      );
+      const addedDirectory = current.directories?.some(
+        (path) => inFolder(path, operation.path) && !previous.directories?.includes(path),
+      );
+      if (subtreeChanged || addedDirectory)
+        return 'Вміст папки змінився на сервері. Перегляньте його перед видаленням.';
+    }
+  }
+  return structureError(operations, current);
 }
 
 export function workspaceError(error: unknown, fallback: string): string {
@@ -241,6 +279,11 @@ export function createWorkspaceModel(projectId: number, api: WorkspaceApi, delay
       const deleted = new Set(
         state.structure.filter((op) => op.type === 'deleteFile').map((op) => op.fileId),
       );
+      for (const operation of state.structure) {
+        if (operation.type !== 'deleteDirectory') continue;
+        for (const file of state.snapshot.tree)
+          if (file.path.startsWith(`${operation.path}/`)) deleted.add(file.fileId);
+      }
       const operations: Changes['operations'] = Object.entries(state.files)
         .filter(([id, f]) => f.base !== f.content && !deleted.has(Number(id)))
         .map(([fileId, f]) => ({
@@ -334,7 +377,9 @@ export function createWorkspaceModel(projectId: number, api: WorkspaceApi, delay
       state.status = dirty.value ? 'dirty' : 'clean';
       if (
         result.revisionId !== attempt.body.baseRevisionId &&
-        attempt.body.operations.some((operation) => operation.type !== 'updateContext')
+        attempt.body.operations.some(
+          (operation) => operation.type !== 'updateContext' && operation.type !== 'createDirectory',
+        )
       )
         state.compilationRevision = result.revisionId;
       const newFile = attempt.selectPath
@@ -446,14 +491,7 @@ export function createWorkspaceModel(projectId: number, api: WorkspaceApi, delay
                   operations: JSON.parse(JSON.stringify(state.structure)) as StructureChange[],
                   description: state.structureLabels.join(' · '),
                   include: false,
-                  error: state.structure.some((op) => {
-                    if (op.type !== 'replaceFile') return false;
-                    const previous = state.snapshot!.tree.find((f) => f.fileId === op.fileId);
-                    const current = snapshot.tree.find((f) => f.fileId === op.fileId);
-                    return previous?.sha256 !== current?.sha256 || previous?.path !== current?.path;
-                  })
-                    ? 'Ресурс змінився на сервері. Перегляньте актуальний файл перед заміною.'
-                    : structureError(state.structure, snapshot),
+                  error: replayStructureError(state.structure, state.snapshot!, snapshot),
                 },
               ]
             : [],

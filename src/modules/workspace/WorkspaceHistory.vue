@@ -615,11 +615,31 @@ onBeforeUnmount(() => {
                 </details>
               </section>
               <p
-                v-else-if="!diff.context.changed && !diff.entrypoint.changed"
+                v-else-if="
+                  !diff.context.changed &&
+                  !diff.entrypoint.changed &&
+                  !diff.directories.added.length &&
+                  !diff.directories.deleted.length
+                "
                 class="history-state"
               >
                 У цих версіях немає змін.
               </p>
+              <section
+                v-if="diff.directories.added.length || diff.directories.deleted.length"
+                class="history-change history-directory-diff"
+                aria-label="Зміни папок"
+              >
+                <h3>Папки</h3>
+                <ul>
+                  <li v-for="path in diff.directories.added" :key="`added-${path}`">
+                    <span aria-label="Додано">+</span><code>{{ path }}</code>
+                  </li>
+                  <li v-for="path in diff.directories.deleted" :key="`deleted-${path}`">
+                    <span aria-label="Видалено">−</span><code>{{ path }}</code>
+                  </li>
+                </ul>
+              </section>
               <details v-if="diff.context.changed" class="history-change history-diff-group">
                 <summary class="history-change-heading">
                   <h3>Контекст проєкту</h3>
@@ -807,6 +827,38 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 10px;
   padding-top: 12px;
+}
+.history-directory-diff {
+  padding: 10px 12px;
+}
+.history-directory-diff h3 {
+  margin-bottom: 8px;
+}
+.history-directory-diff ul {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.history-directory-diff li {
+  display: flex;
+  min-width: 0;
+  gap: 8px;
+  align-items: baseline;
+  color: var(--color-muted);
+  font-size: 12px;
+}
+.history-directory-diff li code {
+  min-width: 0;
+  color: var(--color-text);
+  font: 12px var(--font-code);
+  overflow-wrap: anywhere;
+}
+.history-directory-diff li span {
+  flex: 0 0 12px;
+  font-weight: 700;
+  text-align: center;
 }
 .history-change {
   min-width: 0;

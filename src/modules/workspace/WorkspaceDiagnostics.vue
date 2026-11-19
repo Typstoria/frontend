@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, watch } from 'vue';
 import type { Diagnostic } from './compilation-api';
 
 type DiagnosticsResult = {
@@ -17,7 +17,7 @@ const emit = defineEmits<{
   source: [item: Diagnostic, revisionId: number];
 }>();
 
-const isOpen = ref(false);
+const isOpen = defineModel<boolean>('open', { required: true });
 const items = computed(() => props.result?.items ?? []);
 
 watch(

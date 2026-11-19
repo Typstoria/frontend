@@ -3,8 +3,11 @@ import type { RequestOptions } from '../../shared/api/client';
 import type { components } from '../../shared/api/schema';
 import { parseProject } from '../projects/projects-api';
 import { matchesResourceType, maxResourceBytes } from './resource-formats';
+import { filePathError } from './file-path';
 
-export type Snapshot = components['schemas']['ProjectStateDto'];
+export type Snapshot = Omit<components['schemas']['ProjectStateDto'], 'directories'> & {
+  directories?: string[];
+};
 export type TextFile = components['schemas']['ProjectTextFileDto'];
 export type TextChange = components['schemas']['UpdateTextDto'];
 export type ContextChange = components['schemas']['UpdateContextDto'];
@@ -14,7 +17,10 @@ export type StructureChange =
   | components['schemas']['DeleteFileDto']
   | components['schemas']['SetEntrypointDto']
   | components['schemas']['AttachFileDto']
-  | components['schemas']['ReplaceFileDto'];
+  | components['schemas']['ReplaceFileDto']
+  | components['schemas']['CreateDirectoryDto']
+  | components['schemas']['RenameDirectoryDto']
+  | components['schemas']['DeleteDirectoryDto'];
 export type FileChange = TextChange | ContextChange | StructureChange;
 export type Changes = { baseRevisionId: number; operations: FileChange[] };
 export type SaveResult = components['schemas']['ProjectChangesResultDto'];
@@ -74,7 +80,11 @@ export function parseSnapshot(v: unknown, projectId: number): Snapshot {
   )
     invalid();
   const tree = v.tree.map(parseFile);
+  const directories: unknown = v.directories ?? [];
   if (
+    !Array.isArray(directories) ||
+    directories.some((path) => typeof path !== 'string' || filePathError(path, [])) ||
+    new Set(directories).size !== directories.length ||
     new Set(tree.map((f) => f.fileId)).size !== tree.length ||
     new Set(tree.map((f) => f.path)).size !== tree.length ||
     !tree.some((f) => f.fileId === v.mainFileId && f.contentKind === 'text')
@@ -84,6 +94,7 @@ export function parseSnapshot(v: unknown, projectId: number): Snapshot {
     project,
     mainFileId: v.mainFileId,
     contextText: v.contextText,
+    directories,
     tree,
     revision: {
       id: r.id,

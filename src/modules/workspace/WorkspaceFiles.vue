@@ -2,9 +2,12 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import type { ComponentPublicInstance } from 'vue';
 import type { Snapshot } from './workspace-api';
+import WorkspaceInlineName from './WorkspaceInlineName.vue';
+import { parentFolder } from './file-path';
 
 const props = defineProps<{
   files: Snapshot['tree'];
+  directories: string[];
   selectedId: number;
   selectedFolder: string | null;
   dirtyIds: number[];
@@ -13,42 +16,82 @@ const props = defineProps<{
   disabled: boolean;
   replaceDisabled: boolean;
   mobile: boolean;
+  inlineEdit?: {
+    kind: 'create' | 'createDirectory' | 'rename' | 'renameDirectory';
+    directory: string;
+    target?: number | string;
+    name: string;
+    error: string;
+    busy: boolean;
+    locked: boolean;
+    retryLabel?: string | undefined;
+  };
 }>();
 const emit = defineEmits<{
   select: [fileId: number];
   toggle: [path: string];
   selectFolder: [path: string];
+  inlineInput: [name: string];
+  inlineSubmit: [];
+  inlineCancel: [];
+  inlineRetry: [];
   action: [
-    kind: 'rename' | 'delete' | 'entrypoint' | 'replace',
-    fileId: number,
+    kind:
+      | 'create'
+      | 'createDirectory'
+      | 'upload'
+      | 'rename'
+      | 'move'
+      | 'delete'
+      | 'entrypoint'
+      | 'replace'
+      | 'renameDirectory'
+      | 'moveDirectory'
+      | 'deleteDirectory',
+    target: number | string,
     trigger: HTMLElement,
   ];
 }>();
 
-type FileTreeNode = { path: string; name: string; depth: number; file?: Snapshot['tree'][number] };
-type ActionKind = 'rename' | 'delete' | 'entrypoint' | 'replace';
-type OpenMenu = { fileId: number; trigger: HTMLElement };
+type FileTreeNode = {
+  path: string;
+  name: string;
+  depth: number;
+  file?: Snapshot['tree'][number];
+  hasChildren?: boolean;
+};
+type ActionKind =
+  | 'create'
+  | 'createDirectory'
+  | 'upload'
+  | 'rename'
+  | 'move'
+  | 'delete'
+  | 'entrypoint'
+  | 'replace'
+  | 'renameDirectory'
+  | 'moveDirectory'
+  | 'deleteDirectory';
+type OpenMenu = { target: number | string; isFolder: boolean; trigger: HTMLElement };
 const rows = computed(() => {
-  const folders = new Map<string, FileTreeNode>();
   const children = new Map<string, FileTreeNode[]>();
   function append(parent: string, node: FileTreeNode) {
     const list = children.get(parent) ?? [];
     list.push(node);
     children.set(parent, list);
   }
+  for (const path of props.directories) {
+    const parts = path.split('/');
+    append(parentFolder(path), { path, name: parts.at(-1)!, depth: parts.length - 1 });
+  }
   for (const file of props.files) {
     const parts = file.path.split('/');
-    let parent = '';
-    for (let index = 0; index < parts.length - 1; index++) {
-      const path = parts.slice(0, index + 1).join('/');
-      if (!folders.has(path)) {
-        const folder = { path, name: parts[index]!, depth: index };
-        folders.set(path, folder);
-        append(parent, folder);
-      }
-      parent = path;
-    }
-    append(parent, { path: file.path, name: parts.at(-1)!, depth: parts.length - 1, file });
+    append(parentFolder(file.path), {
+      path: file.path,
+      name: parts.at(-1)!,
+      depth: parts.length - 1,
+      file,
+    });
   }
   const visible: FileTreeNode[] = [];
   function visit(parent: string) {
@@ -58,6 +101,7 @@ const rows = computed(() => {
         Number(Boolean(a.file)) - Number(Boolean(b.file)) || a.name.localeCompare(b.name, 'uk'),
     );
     for (const node of list) {
+      if (!node.file) node.hasChildren = children.has(node.path);
       visible.push(node);
       if (!node.file && !props.collapsedPaths.includes(node.path)) visit(node.path);
     }
@@ -70,10 +114,23 @@ const openMenu = ref<OpenMenu | null>(null);
 const menuElement = ref<HTMLElement | null>(null);
 const menuPosition = ref({ left: 0, top: 0 });
 const menuActions = computed(() => {
-  const file = rows.value.find((node) => node.file?.fileId === openMenu.value?.fileId)?.file;
+  const target = openMenu.value?.target;
+  if (openMenu.value?.isFolder) {
+    if (typeof target !== 'string' || !target) return [];
+    return [
+      { kind: 'create' as const, label: 'Створити файл', disabled: props.disabled },
+      { kind: 'createDirectory' as const, label: 'Створити папку', disabled: props.disabled },
+      { kind: 'upload' as const, label: 'Завантажити файл', disabled: props.disabled },
+      { kind: 'renameDirectory' as const, label: 'Перейменувати папку', disabled: props.disabled },
+      { kind: 'moveDirectory' as const, label: 'Перемістити папку', disabled: props.disabled },
+      { kind: 'deleteDirectory' as const, label: 'Видалити папку', disabled: props.disabled },
+    ];
+  }
+  const file = rows.value.find((node) => node.file?.fileId === target)?.file;
   if (!file) return [];
   const actions: { kind: ActionKind; label: string; disabled?: boolean }[] = [
     { kind: 'rename', label: 'Перейменувати файл', disabled: props.disabled },
+    { kind: 'move', label: 'Перемістити файл', disabled: props.disabled },
     { kind: 'delete', label: 'Видалити файл', disabled: props.disabled },
   ];
   if (
@@ -104,28 +161,45 @@ function clampMenuPosition(x: number, y: number) {
   };
 }
 
-async function showMenu(fileId: number, trigger: HTMLElement, x: number, y: number) {
+async function showMenu(
+  target: number | string,
+  isFolder: boolean,
+  trigger: HTMLElement,
+  x: number,
+  y: number,
+) {
   if (props.disabled) return;
-  openMenu.value = { fileId, trigger };
+  openMenu.value = { target, isFolder, trigger };
   await nextTick();
-  if (openMenu.value?.fileId !== fileId) return;
+  if (openMenu.value?.target !== target) return;
   clampMenuPosition(x, y);
   document.addEventListener('pointerdown', onOutsidePointerDown, true);
   menuElement.value?.querySelector<HTMLElement>('[role="menuitem"]:not(:disabled)')?.focus();
 }
 
 function onContextMenu(node: FileTreeNode, event: MouseEvent) {
-  if (!node.file || props.disabled) return;
+  if (props.disabled) return;
   event.preventDefault();
-  void showMenu(node.file.fileId, event.currentTarget as HTMLElement, event.clientX, event.clientY);
+  void showMenu(
+    node.file?.fileId ?? node.path,
+    !node.file,
+    event.currentTarget as HTMLElement,
+    event.clientX,
+    event.clientY,
+  );
 }
 
 function onRowKeydown(node: FileTreeNode, event: KeyboardEvent) {
-  if (!node.file || !((event.key === 'F10' && event.shiftKey) || event.key === 'ContextMenu'))
-    return;
+  if (!((event.key === 'F10' && event.shiftKey) || event.key === 'ContextMenu')) return;
   event.preventDefault();
   const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
-  void showMenu(node.file.fileId, event.currentTarget as HTMLElement, rect.left, rect.bottom);
+  void showMenu(
+    node.file?.fileId ?? node.path,
+    !node.file,
+    event.currentTarget as HTMLElement,
+    rect.left,
+    rect.bottom,
+  );
 }
 
 function dismissMenu(restoreFocus = false) {
@@ -179,11 +253,11 @@ function onMenuFocusout(event: FocusEvent) {
 function runAction(kind: ActionKind) {
   const current = openMenu.value;
   if (!current) return;
-  const { fileId, trigger } = current;
+  const { target, trigger } = current;
   document.removeEventListener('pointerdown', onOutsidePointerDown, true);
   openMenu.value = null;
   if (trigger.isConnected) trigger.focus();
-  emit('action', kind, fileId, trigger);
+  emit('action', kind, target, trigger);
 }
 
 function setMenuElement(element: Element | ComponentPublicInstance | null) {
@@ -194,15 +268,41 @@ function indentation(depth: number) {
   return Math.min(depth * 16, 96);
 }
 
-function openFromActionsButton(fileId: number, event: MouseEvent) {
+function openFromActionsButton(target: number | string, isFolder: boolean, event: MouseEvent) {
   if (props.disabled) return;
   const trigger = event.currentTarget as HTMLElement;
   const rect = trigger.getBoundingClientRect();
-  void showMenu(fileId, trigger, rect.right, rect.bottom);
+  void showMenu(target, isFolder, trigger, rect.right, rect.bottom);
+}
+
+function hasInlineTarget(node: FileTreeNode) {
+  const edit = props.inlineEdit;
+  if (!edit || (edit.kind !== 'rename' && edit.kind !== 'renameDirectory')) return false;
+  return edit.kind === 'rename'
+    ? node.file?.fileId === edit.target
+    : !node.file && node.path === edit.target;
+}
+
+function isInlineCreationAfter(node: FileTreeNode) {
+  const edit = props.inlineEdit;
+  return (
+    !!edit &&
+    (edit.kind === 'create' || edit.kind === 'createDirectory') &&
+    edit.directory !== '' &&
+    edit.directory === node.path &&
+    !node.file
+  );
 }
 
 watch(rows, (visibleRows) => {
-  if (openMenu.value && !visibleRows.some((node) => node.file?.fileId === openMenu.value?.fileId)) {
+  if (
+    openMenu.value &&
+    !visibleRows.some((node) =>
+      openMenu.value?.isFolder
+        ? !node.file && node.path === openMenu.value.target
+        : node.file?.fileId === openMenu.value?.target,
+    )
+  ) {
     dismissMenu();
   }
 });
@@ -213,143 +313,245 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onOutsidePoint
 <template>
   <ul class="workspace-file-list">
     <li
+      v-if="
+        inlineEdit &&
+        (inlineEdit.kind === 'create' || inlineEdit.kind === 'createDirectory') &&
+        !inlineEdit.directory
+      "
+      class="workspace-file-row workspace-inline-name-row"
+    >
+      <WorkspaceInlineName
+        :kind="inlineEdit.kind"
+        :name="inlineEdit.name"
+        :error="inlineEdit.error"
+        :busy="inlineEdit.busy"
+        :locked="inlineEdit.locked"
+        :retry-label="inlineEdit.retryLabel"
+        @input="emit('inlineInput', $event)"
+        @submit="emit('inlineSubmit')"
+        @cancel="emit('inlineCancel')"
+        @retry="emit('inlineRetry')"
+      />
+    </li>
+    <template
       v-for="node in rows"
       :key="node.file ? `file-${node.file.fileId}` : `folder-${node.path}`"
-      class="workspace-file-row"
     >
-      <template v-if="node.file">
-        <button
-          type="button"
-          class="workspace-file-tree-button"
+      <li class="workspace-file-row">
+        <WorkspaceInlineName
+          v-if="hasInlineTarget(node) && inlineEdit"
+          :kind="inlineEdit.kind"
+          :name="inlineEdit.name"
+          :error="inlineEdit.error"
+          :busy="inlineEdit.busy"
+          :locked="inlineEdit.locked"
+          :retry-label="inlineEdit.retryLabel"
           :style="{
-            paddingLeft: `calc(${indentation(node.depth)}px + var(--file-disclosure-width) + 4px)`,
+            marginLeft: `calc(${indentation(node.depth)}px + var(--file-disclosure-width) + 4px)`,
           }"
-          :aria-label="node.path"
-          :title="node.file.fileId === mainFileId ? `${node.path} — Головний файл` : node.path"
-          :aria-description="node.file.fileId === mainFileId ? 'Головний файл' : undefined"
-          :aria-current="node.file.fileId === selectedId ? 'true' : undefined"
-          @click="emit('select', node.file.fileId)"
-          @contextmenu="onContextMenu(node, $event)"
-          @keydown="onRowKeydown(node, $event)"
-        >
-          <svg
-            class="file-symbol"
-            viewBox="0 0 16 16"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.2"
-            aria-hidden="true"
-          >
-            <path d="M4 2h5l3 3v9H4zM9 2v4h3" />
-          </svg>
-          <span class="workspace-file-name">{{ node.name }}</span>
-          <span
-            v-if="node.file.fileId === mainFileId || dirtyIds.includes(node.file.fileId)"
-            class="file-markers"
-          >
-            <span
-              v-if="dirtyIds.includes(node.file.fileId)"
-              class="file-dirty"
-              aria-label="Незбережені зміни"
-              >●</span
-            >
-            <svg
-              v-if="node.file.fileId === mainFileId"
-              class="file-main-icon"
-              viewBox="0 0 16 16"
-              fill="currentColor"
-              role="img"
-              aria-label="Головний файл"
-            >
-              <title>Головний файл</title>
-              <path
-                d="m8 1.5 1.9 3.85 4.25.62-3.08 3 .73 4.23L8 11.2l-3.8 2 .73-4.23-3.08-3 4.25-.62L8 1.5Z"
-              />
-            </svg>
-          </span>
-        </button>
-        <button
-          v-if="mobile"
-          type="button"
-          class="workspace-file-actions-trigger"
-          :aria-label="`Дії з файлом: ${node.path}`"
-          aria-haspopup="menu"
-          :aria-expanded="openMenu?.fileId === node.file.fileId"
-          :disabled="disabled"
-          @click="openFromActionsButton(node.file.fileId, $event)"
-        >
-          <span aria-hidden="true">•••</span>
-        </button>
-        <div
-          v-if="openMenu?.fileId === node.file.fileId"
-          :ref="setMenuElement"
-          class="workspace-file-action-menu"
-          role="menu"
-          :style="{ left: `${menuPosition.left}px`, top: `${menuPosition.top}px` }"
-          @keydown="onMenuKeydown"
-          @focusout="onMenuFocusout"
-        >
+          @input="emit('inlineInput', $event)"
+          @submit="emit('inlineSubmit')"
+          @cancel="emit('inlineCancel')"
+          @retry="emit('inlineRetry')"
+        />
+        <template v-else-if="node.file">
           <button
-            v-for="action in menuActions"
-            :key="action.kind"
             type="button"
-            role="menuitem"
-            tabindex="-1"
-            :disabled="action.disabled"
-            @click="runAction(action.kind)"
+            class="workspace-file-tree-button"
+            :data-tree-target="String(node.file.fileId)"
+            :style="{
+              paddingLeft: `calc(${indentation(node.depth)}px + var(--file-disclosure-width) + 4px)`,
+            }"
+            :aria-label="node.path"
+            :title="node.file.fileId === mainFileId ? `${node.path} — Головний файл` : node.path"
+            :aria-description="node.file.fileId === mainFileId ? 'Головний файл' : undefined"
+            :aria-current="node.file.fileId === selectedId ? 'true' : undefined"
+            @click="emit('select', node.file.fileId)"
+            @contextmenu="onContextMenu(node, $event)"
+            @keydown="onRowKeydown(node, $event)"
           >
-            {{ action.label }}
+            <svg
+              class="file-symbol"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.2"
+              aria-hidden="true"
+            >
+              <path d="M4 2h5l3 3v9H4zM9 2v4h3" />
+            </svg>
+            <span class="workspace-file-name">{{ node.name }}</span>
+            <span
+              v-if="node.file.fileId === mainFileId || dirtyIds.includes(node.file.fileId)"
+              class="file-markers"
+            >
+              <span
+                v-if="dirtyIds.includes(node.file.fileId)"
+                class="file-dirty"
+                aria-label="Незбережені зміни"
+                >●</span
+              >
+              <svg
+                v-if="node.file.fileId === mainFileId"
+                class="file-main-icon"
+                viewBox="0 0 16 16"
+                fill="currentColor"
+                role="img"
+                aria-label="Головний файл"
+              >
+                <title>Головний файл</title>
+                <path
+                  d="m8 1.5 1.9 3.85 4.25.62-3.08 3 .73 4.23L8 11.2l-3.8 2 .73-4.23-3.08-3 4.25-.62L8 1.5Z"
+                />
+              </svg>
+            </span>
           </button>
-        </div>
-      </template>
-      <template v-else>
-        <button
-          type="button"
-          class="workspace-folder-disclosure"
-          :style="{ marginLeft: `${indentation(node.depth)}px` }"
-          :aria-label="`${collapsedPaths.includes(node.path) ? 'Розгорнути' : 'Згорнути'} папку: ${node.path}`"
-          :aria-expanded="!collapsedPaths.includes(node.path)"
-          @click="emit('toggle', node.path)"
-        >
-          <svg
-            class="file-chevron"
-            :class="{ collapsed: collapsedPaths.includes(node.path) }"
-            viewBox="0 0 16 16"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.5"
-            aria-hidden="true"
+          <button
+            v-if="mobile"
+            type="button"
+            class="workspace-file-actions-trigger"
+            :aria-label="`Дії з файлом: ${node.path}`"
+            aria-haspopup="menu"
+            :aria-expanded="openMenu?.target === node.file.fileId"
+            :disabled="disabled"
+            @click="openFromActionsButton(node.file.fileId, false, $event)"
           >
-            <path d="m5 6 3 3 3-3" />
-          </svg>
-        </button>
-        <button
-          type="button"
-          class="workspace-file-tree-button workspace-folder-name-button"
-          :aria-label="node.path"
-          :title="node.path"
-          :aria-current="selectedFolder === node.path ? 'true' : undefined"
-          @click="emit('selectFolder', node.path)"
-        >
-          <svg
-            class="file-folder"
-            :class="{ 'file-folder-open': !collapsedPaths.includes(node.path) }"
-            viewBox="0 0 16 16"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.2"
-            aria-hidden="true"
+            <span aria-hidden="true">•••</span>
+          </button>
+          <div
+            v-if="openMenu?.target === node.file.fileId && !openMenu.isFolder"
+            :ref="setMenuElement"
+            class="workspace-file-action-menu"
+            role="menu"
+            :style="{ left: `${menuPosition.left}px`, top: `${menuPosition.top}px` }"
+            @keydown="onMenuKeydown"
+            @focusout="onMenuFocusout"
           >
-            <path
-              v-if="collapsedPaths.includes(node.path)"
-              d="M1.75 4.25h4l1.4 1.5h7.1v6.5H1.75z"
-            />
-            <path v-else d="M1.75 4.25h4l1.4 1.5h7.1l-1.15 6H1.75z" />
-          </svg>
-          <span class="workspace-file-name">{{ node.name }}</span>
-        </button>
-      </template>
-    </li>
+            <button
+              v-for="action in menuActions"
+              :key="action.kind"
+              type="button"
+              role="menuitem"
+              tabindex="-1"
+              :disabled="action.disabled"
+              @click="runAction(action.kind)"
+            >
+              {{ action.label }}
+            </button>
+          </div>
+        </template>
+        <template v-else>
+          <button
+            v-if="node.hasChildren"
+            type="button"
+            class="workspace-folder-disclosure"
+            :style="{ marginLeft: `${indentation(node.depth)}px` }"
+            :aria-label="`${collapsedPaths.includes(node.path) ? 'Розгорнути' : 'Згорнути'} папку: ${node.path}`"
+            :aria-expanded="!collapsedPaths.includes(node.path)"
+            @click="emit('toggle', node.path)"
+          >
+            <svg
+              class="file-chevron"
+              :class="{ collapsed: collapsedPaths.includes(node.path) }"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              aria-hidden="true"
+            >
+              <path d="m5 6 3 3 3-3" />
+            </svg>
+          </button>
+          <span
+            v-else
+            class="workspace-folder-disclosure"
+            :style="{ marginLeft: `${indentation(node.depth)}px` }"
+            aria-hidden="true"
+          ></span>
+          <button
+            type="button"
+            class="workspace-file-tree-button workspace-folder-name-button"
+            :data-tree-target="node.path"
+            :aria-label="node.path"
+            :title="node.path"
+            :aria-current="selectedFolder === node.path ? 'true' : undefined"
+            @click="emit('selectFolder', node.path)"
+            @contextmenu="onContextMenu(node, $event)"
+            @keydown="onRowKeydown(node, $event)"
+          >
+            <svg
+              class="file-folder"
+              :class="{ 'file-folder-open': !collapsedPaths.includes(node.path) }"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.2"
+              aria-hidden="true"
+            >
+              <path
+                v-if="!node.hasChildren || collapsedPaths.includes(node.path)"
+                d="M1.75 4.25h4l1.4 1.5h7.1v6.5H1.75z"
+              />
+              <path v-else d="M1.75 4.25h4l1.4 1.5h7.1l-1.15 6H1.75z" />
+            </svg>
+            <span class="workspace-file-name">{{ node.name }}</span>
+          </button>
+          <button
+            v-if="mobile"
+            type="button"
+            class="workspace-file-actions-trigger"
+            :aria-label="`Дії з папкою: ${node.path}`"
+            aria-haspopup="menu"
+            :aria-expanded="openMenu?.target === node.path && openMenu.isFolder"
+            :disabled="disabled"
+            @click="openFromActionsButton(node.path, true, $event)"
+          >
+            <span aria-hidden="true">•••</span>
+          </button>
+          <div
+            v-if="openMenu?.target === node.path && openMenu.isFolder"
+            :ref="setMenuElement"
+            class="workspace-file-action-menu"
+            role="menu"
+            :style="{ left: `${menuPosition.left}px`, top: `${menuPosition.top}px` }"
+            @keydown="onMenuKeydown"
+            @focusout="onMenuFocusout"
+          >
+            <button
+              v-for="action in menuActions"
+              :key="action.kind"
+              type="button"
+              role="menuitem"
+              tabindex="-1"
+              :disabled="action.disabled"
+              @click="runAction(action.kind)"
+            >
+              {{ action.label }}
+            </button>
+          </div>
+        </template>
+      </li>
+      <li
+        v-if="isInlineCreationAfter(node) && inlineEdit"
+        class="workspace-file-row workspace-inline-name-row"
+      >
+        <WorkspaceInlineName
+          :kind="inlineEdit.kind"
+          :name="inlineEdit.name"
+          :error="inlineEdit.error"
+          :busy="inlineEdit.busy"
+          :locked="inlineEdit.locked"
+          :retry-label="inlineEdit.retryLabel"
+          :style="{
+            marginLeft: `calc(${indentation(node.depth + 1)}px + var(--file-disclosure-width) + 4px)`,
+          }"
+          @input="emit('inlineInput', $event)"
+          @submit="emit('inlineSubmit')"
+          @cancel="emit('inlineCancel')"
+          @retry="emit('inlineRetry')"
+        />
+      </li>
+    </template>
   </ul>
 </template>
 

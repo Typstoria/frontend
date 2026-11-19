@@ -7,10 +7,17 @@ export function parentFolder(path: string): string {
   return separator < 0 ? '' : path.slice(0, separator);
 }
 
-export function projectFolders(files: readonly File[]): string[] {
+export function inFolder(path: string, directory: string): boolean {
+  return path.startsWith(`${directory}/`);
+}
+
+export function projectFolders(
+  files: readonly File[],
+  directories: readonly string[] = [],
+): string[] {
   const folders = new Set<string>();
-  for (const file of files) {
-    let folder = parentFolder(normalizeFilePath(file.path));
+  for (const path of [...directories, ...files.map((file) => parentFolder(file.path))]) {
+    let folder = normalizeFilePath(path);
     while (folder && !folders.has(folder)) {
       folders.add(folder);
       folder = parentFolder(folder);
@@ -19,10 +26,9 @@ export function projectFolders(files: readonly File[]): string[] {
   return [...folders].sort((left, right) => left.localeCompare(right));
 }
 
-export function fileNameError(fileName: string): string {
-  if (!fileName) return 'Вкажіть назву файла.';
-  if (fileName.includes('/') || fileName.includes('\\'))
-    return 'Назва файла не може містити шлях до папки.';
+export function fileNameError(fileName: string, directory = false): string {
+  if (!fileName.trim()) return directory ? 'Вкажіть назву папки.' : 'Вкажіть назву файла.';
+  if (fileName.includes('/') || fileName.includes('\\')) return 'Введіть лише назву, без шляху.';
   return '';
 }
 

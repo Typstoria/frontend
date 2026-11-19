@@ -2,7 +2,7 @@
 import { nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue';
 
 const props = defineProps<{ disabled: boolean; uploadDisabled: boolean }>();
-const emit = defineEmits<{ create: []; upload: [] }>();
+const emit = defineEmits<{ create: []; createDirectory: []; upload: [] }>();
 
 const host = ref<HTMLDivElement | null>(null);
 const trigger = ref<HTMLButtonElement | null>(null);
@@ -75,10 +75,11 @@ function onDocumentPointerDown(event: PointerEvent) {
   closeMenu(false);
 }
 
-function choose(action: 'create' | 'upload') {
+function choose(action: 'create' | 'createDirectory' | 'upload') {
   closeMenu(false);
   trigger.value?.focus({ preventScroll: true });
   if (action === 'create') emit('create');
+  else if (action === 'createDirectory') emit('createDirectory');
   else emit('upload');
 }
 
@@ -99,8 +100,8 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPoin
       ref="trigger"
       class="file-icon-button"
       type="button"
-      aria-label="Додати файл"
-      title="Додати файл"
+      aria-label="Додати до проєкту"
+      title="Додати до проєкту"
       aria-haspopup="menu"
       :aria-expanded="isOpen"
       :aria-controls="menuId"
@@ -123,11 +124,14 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPoin
       :id="menuId"
       class="file-add-menu"
       role="menu"
-      aria-label="Додати файл"
+      aria-label="Додати до проєкту"
       @keydown="onMenuKeydown"
     >
       <button type="button" role="menuitem" tabindex="-1" @click="choose('create')">
         Створити файл
+      </button>
+      <button type="button" role="menuitem" tabindex="-1" @click="choose('createDirectory')">
+        Створити папку
       </button>
       <button
         type="button"

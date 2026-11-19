@@ -29,10 +29,13 @@ type ServerFile = {
   mediaType: string;
 };
 type Server = {
+  title: string;
   revisionId: number;
   mainFileId: number;
   nextFileId: number;
   files: ServerFile[];
+  directories: string[];
+  directoryVersions: Map<number, string[]>;
 };
 const initialFiles = (): ServerFile[] => [
   {
@@ -65,7 +68,7 @@ const apiError = (code = 'INTERNAL_ERROR') => ({
 function snapshot(server: Server) {
   return {
     mainFileId: server.mainFileId,
-    project: { ...project, currentRevisionId: server.revisionId },
+    project: { ...project, title: server.title, currentRevisionId: server.revisionId },
     revision: {
       id: server.revisionId,
       number: server.revisionId - 99,
@@ -76,6 +79,7 @@ function snapshot(server: Server) {
       historySyncStatus: 'pending',
     },
     contextText: '',
+    directories: [...(server.directoryVersions.get(server.revisionId) ?? server.directories)],
     tree: server.files.map((file) => ({
       fileId: file.fileId,
       path: file.path,
@@ -111,12 +115,31 @@ function apply(server: Server, body: Changes) {
       if (target) target.path = operation.path.normalize('NFC');
     } else if (operation.type === 'deleteFile') {
       server.files = server.files.filter((file) => file.fileId !== operation.fileId);
+    } else if (operation.type === 'createDirectory') {
+      server.directories.push(operation.path);
+    } else if (operation.type === 'renameDirectory') {
+      server.directories = server.directories
+        .filter((path) => path !== operation.path && !path.startsWith(`${operation.path}/`))
+        .concat(
+          server.directories
+            .filter((path) => path === operation.path || path.startsWith(`${operation.path}/`))
+            .map((path) => `${operation.newPath}${path.slice(operation.path.length)}`),
+        );
+      for (const file of server.files)
+        if (file.path.startsWith(`${operation.path}/`))
+          file.path = `${operation.newPath}${file.path.slice(operation.path.length)}`;
+    } else if (operation.type === 'deleteDirectory') {
+      server.directories = server.directories.filter(
+        (path) => path !== operation.path && !path.startsWith(`${operation.path}/`),
+      );
+      server.files = server.files.filter((file) => !file.path.startsWith(`${operation.path}/`));
     } else if (operation.type === 'setEntrypoint') {
       const target = server.files.find((file) => file.path === operation.path.normalize('NFC'));
       if (target) server.mainFileId = target.fileId;
     }
   }
   server.revisionId++;
+  server.directoryVersions.set(server.revisionId, [...server.directories]);
   return {
     projectId: 1,
     revisionId: server.revisionId,
@@ -161,10 +184,13 @@ async function installApi(
   } = {},
 ) {
   const server: Server = {
+    title: project.title,
     revisionId: 100,
     mainFileId: 10,
     nextFileId: 12,
     files: initialFiles(),
+    directories: [],
+    directoryVersions: new Map([[100, []]]),
   };
   const stateRevisionReads: number[] = [];
   const bodies: Changes[] = [];
@@ -254,19 +280,43 @@ async function hideFiles(page: Page) {
   }
 }
 
-async function openNewFileDialog(page: Page) {
-  await showFiles(page);
-  await page.getByRole('button', { name: 'Додати файл', exact: true }).click();
-  await page.getByRole('menuitem', { name: 'Створити файл', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Новий файл', exact: true })).toBeVisible();
-  await expect(page.getByRole('dialog', { name: 'Файли', exact: true })).toHaveCount(0);
+const mobileLayout = (page: Page) => page.evaluate(() => window.innerWidth <= 720);
+async function newFileSurface(page: Page) {
+  return (await mobileLayout(page))
+    ? page.getByRole('dialog', { name: 'Новий файл', exact: true })
+    : page.locator('.workspace-inline-name');
 }
 
-async function fileMenu(page: Page, path: string, action: string, useKeyboard = false) {
+async function openNewFileDialog(page: Page) {
+  await showFiles(page);
+  await page.getByRole('button', { name: 'Додати до проєкту', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Створити файл', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Файли', exact: true })).toHaveCount(0);
+  if ((await page.evaluate(() => window.innerWidth)) <= 720)
+    await expect(page.getByRole('heading', { name: 'Новий файл', exact: true })).toBeVisible();
+  else await expect(page.getByLabel('Назва файла', { exact: true })).toBeVisible();
+}
+
+async function submitNewFile(page: Page) {
+  const width = await page.evaluate(() => window.innerWidth);
+  await page
+    .getByRole('button', { name: width <= 720 ? 'Створити файл' : 'Створити', exact: true })
+    .click();
+}
+
+async function fileMenu(
+  page: Page,
+  path: string,
+  action: string,
+  useKeyboard = false,
+  folder = false,
+) {
   await showFiles(page);
   const width = await page.evaluate(() => window.innerWidth);
   if (width <= 720) {
-    await page.getByRole('button', { name: `Дії з файлом: ${path}`, exact: true }).click();
+    await page
+      .getByRole('button', { name: `Дії з ${folder ? 'папкою' : 'файлом'}: ${path}`, exact: true })
+      .click();
   } else {
     const row = page.getByRole('button', { name: path, exact: true });
     if (useKeyboard) {
@@ -278,7 +328,12 @@ async function fileMenu(page: Page, path: string, action: string, useKeyboard = 
   }
   await page.getByRole('menuitem', { name: action, exact: true }).click();
   await expect(page.getByRole('dialog', { name: 'Файли', exact: true })).toHaveCount(0);
-  await expect(page.getByRole('dialog')).toBeVisible();
+  if (width <= 720 || !['Перейменувати файл', 'Перейменувати папку'].includes(action))
+    await expect(page.getByRole('dialog')).toBeVisible();
+  else
+    await expect(
+      page.getByLabel(folder ? 'Назва папки' : 'Назва файла', { exact: true }),
+    ).toBeVisible();
 }
 
 const editor = (page: Page) => page.getByLabel('Вихідний текст', { exact: true });
@@ -307,9 +362,11 @@ test('creates a file in a selected folder and reloads it', async ({ page }) => {
   await folder.click();
   await expect(folder).toHaveAttribute('aria-current', 'true');
   await openNewFileDialog(page);
-  await expect(page.getByLabel('Папка', { exact: true })).toHaveValue('chapters');
+  if (await mobileLayout(page))
+    await expect(page.getByLabel('Папка', { exact: true })).toHaveValue('chapters');
+  else await expect(page.getByRole('dialog', { name: 'Новий файл' })).toHaveCount(0);
   await page.getByLabel('Назва файла', { exact: true }).fill('chapter.typ');
-  await page.getByRole('button', { name: 'Створити', exact: true }).click();
+  await submitNewFile(page);
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await showFiles(page);
   await expect(
@@ -332,6 +389,8 @@ test('creates a file in a selected folder and reloads it', async ({ page }) => {
 test('renames and moves a file while preserving its file ID and content', async ({ page }) => {
   await installSession(page);
   const api = await installApi(page);
+  api.server.directories.push('reference');
+  api.server.directoryVersions.set(api.server.revisionId, ['reference']);
   await openWorkspace(page);
   await showFiles(page);
   await page.getByRole('button', { name: 'notes.typ', exact: true }).click();
@@ -341,19 +400,155 @@ test('renames and moves a file while preserving its file ID and content', async 
   await page.getByRole('button', { name: 'main.typ', exact: true }).click();
   await expect(editor(page)).toContainText('Початок');
   await fileMenu(page, 'notes.typ', 'Перейменувати файл', true);
-  await page.getByLabel('Шлях файла', { exact: true }).fill('reference/notes.typ');
-  await page.getByRole('button', { name: 'Перейменувати', exact: true }).click();
-  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await page.getByLabel('Назва файла', { exact: true }).fill('notes-renamed.typ');
+  await page
+    .getByRole('button', {
+      name: (await mobileLayout(page)) ? 'Перейменувати' : 'Зберегти',
+      exact: true,
+    })
+    .click();
+  await expect(page.getByLabel('Назва файла', { exact: true })).toHaveCount(0);
   await expect(editor(page)).toContainText('Початок');
   await showFiles(page);
-  await expect(
-    page.getByRole('button', { name: 'reference/notes.typ', exact: true }),
-  ).toBeVisible();
+  await expect(page.getByRole('button', { name: 'notes-renamed.typ', exact: true })).toBeVisible();
   expect(api.bodies[0]!.operations).toEqual([
-    { type: 'renameFile', fileId: 11, path: 'reference/notes.typ' },
+    { type: 'renameFile', fileId: 11, path: 'notes-renamed.typ' },
   ]);
   expect(api.server.files.find((file) => file.fileId === 11)?.content).toBe('Нотатки\n');
-  expect(api.server.files.find((file) => file.fileId === 11)?.path).toBe('reference/notes.typ');
+  expect(api.server.files.find((file) => file.fileId === 11)?.path).toBe('notes-renamed.typ');
+
+  await fileMenu(page, 'notes-renamed.typ', 'Перемістити файл');
+  await page.getByLabel('Перемістити до', { exact: true }).selectOption('reference');
+  await page.getByRole('button', { name: 'Перемістити', exact: true }).click();
+  await showFiles(page);
+  await expect(
+    page.getByRole('button', { name: 'reference/notes-renamed.typ', exact: true }),
+  ).toBeVisible();
+  expect(api.bodies[1]!.operations).toEqual([
+    { type: 'renameFile', fileId: 11, path: 'reference/notes-renamed.typ' },
+  ]);
+  expect(api.server.files.find((file) => file.fileId === 11)?.content).toBe('Нотатки\n');
+});
+
+test('creates, renames, moves and removes an empty folder through the file tree', async ({
+  page,
+}) => {
+  await installSession(page);
+  const api = await installApi(page);
+  api.server.directories.push('chapters');
+  api.server.directoryVersions.set(100, ['chapters']);
+  await openWorkspace(page);
+  await showFiles(page);
+  const folder = (path: string) => page.getByRole('button', { name: path, exact: true });
+  const name = page.getByLabel('Назва папки', { exact: true });
+  const add = async () => {
+    await showFiles(page);
+    await folder('Додати до проєкту').click();
+    await page.getByRole('menuitem', { name: 'Створити папку', exact: true }).click();
+    await expect(name).toBeFocused();
+  };
+  await add();
+  await name.fill('bad/path');
+  if (!(await mobileLayout(page))) await name.press('Enter');
+  await expect(page.getByRole('alert')).toContainText('лише назву');
+  await name.press('Escape');
+  await expect(name).toHaveCount(0);
+  expect(api.postCalls()).toBe(0);
+
+  await add();
+  await name.fill('drafts');
+  await name.press('Enter');
+  await expect(name).toHaveCount(0);
+  await showFiles(page);
+  await expect(folder('drafts')).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole('heading', { name: project.title, exact: true })).toBeVisible();
+  await showFiles(page);
+  await expect(folder('drafts')).toBeVisible();
+
+  await fileMenu(page, 'drafts', 'Перейменувати папку', true, true);
+  await name.fill('appendix');
+  await name.press('Enter');
+  await expect(name).toHaveCount(0);
+  await showFiles(page);
+  await expect(folder('appendix')).toBeVisible();
+  await fileMenu(page, 'appendix', 'Перемістити папку', false, true);
+  await expect(folder('Перемістити')).toBeDisabled();
+  const target = page.getByLabel('Перемістити до', { exact: true });
+  await expect(target.locator('option[value="appendix"]')).toHaveCount(0);
+  await target.selectOption('chapters');
+  await folder('Перемістити').click();
+  await expect(target).toHaveCount(0);
+  await showFiles(page);
+  await expect(folder('chapters/appendix')).toBeVisible();
+  await fileMenu(page, 'chapters/appendix', 'Видалити папку', false, true);
+  await folder('Видалити').click();
+  await expect(page.getByRole('dialog', { name: 'Видалити папку?', exact: true })).toHaveCount(0);
+  expect(api.server.directories).toEqual(['chapters']);
+  expect(api.bodies.map((body) => body.operations[0])).toEqual([
+    { type: 'createDirectory', path: 'drafts' },
+    { type: 'renameDirectory', path: 'drafts', newPath: 'appendix' },
+    { type: 'renameDirectory', path: 'appendix', newPath: 'chapters/appendix' },
+    { type: 'deleteDirectory', path: 'chapters/appendix' },
+  ]);
+});
+
+test('opens workspace menus with the keyboard and confirms project deletion explicitly', async ({
+  page,
+}) => {
+  await installSession(page);
+  const api = await installApi(page);
+  let deletes = 0;
+  await page.route('**/api/projects/1', async (route) => {
+    if (route.request().method() === 'PATCH') {
+      api.server.title = route.request().postDataJSON().title;
+      return route.fulfill({ json: snapshot(api.server).project });
+    }
+    expect(route.request().method()).toBe('DELETE');
+    deletes++;
+    return route.fulfill({ status: 204 });
+  });
+  await openWorkspace(page);
+  const mobile = await mobileLayout(page);
+  const group = (name: string) =>
+    page.getByRole('button', { name: mobile ? 'Меню' : name, exact: true });
+  const openGroup = async (name: string) => {
+    await group(name).focus();
+    await page.keyboard.press('ArrowDown');
+    await expect(page.getByRole('menu')).toBeVisible();
+  };
+  await openGroup('Вигляд');
+  const code = page.getByRole('menuitemcheckbox', { name: 'Лише код', exact: true });
+  for (let i = 0; i < 7 && !(await code.evaluate((el) => el === document.activeElement)); i++)
+    await page.keyboard.press('ArrowDown');
+  await expect(code).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(group('Вигляд')).toBeFocused();
+
+  await openGroup('Проєкт');
+  await page.getByRole('menuitem', { name: 'Перейменувати проєкт…', exact: true }).click();
+  await page.getByLabel('Назва', { exact: true }).fill('Нова назва проєкту');
+  await page.getByRole('button', { name: 'Зберегти', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Перейменувати проєкт' })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Нова назва проєкту' })).toBeVisible();
+
+  await editor(page).fill('Локальний текст');
+  const openDelete = async () => {
+    await openGroup('Проєкт');
+    await page.getByRole('menuitem', { name: 'Видалити проєкт…', exact: true }).click();
+  };
+  await openDelete();
+  const confirmation = page.getByRole('dialog', { name: 'Видалити проєкт?' });
+  await expect(confirmation).toContainText('Незбережені правки буде втрачено.');
+  await expect(confirmation.getByRole('button', { name: 'Скасувати' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(confirmation).toHaveCount(0);
+  await expect(editor(page)).toContainText('Локальний текст');
+  expect(deletes).toBe(0);
+  await openDelete();
+  await confirmation.getByRole('button', { name: 'Видалити', exact: true }).click();
+  await expect(page).toHaveURL(/\/projects$/);
+  expect(deletes).toBe(1);
 });
 
 test('deletes a dirty main file and selects its replacement in one atomic batch', async ({
@@ -424,9 +619,10 @@ test('saves existing dirty text and a new file in the same batch', async ({ page
   await editor(page).fill('# Зміна тексту');
   await expect(page.locator('.editor-save-status')).toContainText('Незбережені зміни');
   await openNewFileDialog(page);
-  await expect(page.getByLabel('Папка', { exact: true })).toHaveValue('');
+  if (await mobileLayout(page))
+    await expect(page.getByLabel('Папка', { exact: true })).toHaveValue('');
   await page.getByLabel('Назва файла', { exact: true }).fill('appendix.typ');
-  await page.getByRole('button', { name: 'Створити', exact: true }).click();
+  await submitNewFile(page);
   expect(api.bodies).toHaveLength(1);
   expect(api.bodies[0]!.operations).toEqual([
     { type: 'updateText', fileId: 10, content: '# Зміна тексту' },
@@ -460,8 +656,8 @@ test('retries a lost create response with the identical key and operation before
   await openWorkspace(page);
   await openNewFileDialog(page);
   await page.getByLabel('Назва файла', { exact: true }).fill('chapter.typ');
-  await page.getByRole('button', { name: 'Створити', exact: true }).click();
-  const actionDialog = page.getByRole('dialog', { name: 'Новий файл', exact: true });
+  await submitNewFile(page);
+  const actionDialog = await newFileSurface(page);
   await expect(actionDialog.getByRole('button', { name: 'Повторити', exact: true })).toBeVisible();
   expect(serverApplied).toBe(true);
   await actionDialog.getByRole('button', { name: 'Повторити', exact: true }).click();
@@ -482,12 +678,13 @@ test('refreshes the committed tree without issuing a second POST after a failed 
   api.failNextStateRead();
   await openNewFileDialog(page);
   await page.getByLabel('Назва файла', { exact: true }).fill('chapter.typ');
-  await page.getByRole('button', { name: 'Створити', exact: true }).click();
-  const actionDialog = page.getByRole('dialog', { name: 'Новий файл', exact: true });
+  await submitNewFile(page);
+  const actionDialog = await newFileSurface(page);
   await expect(actionDialog.getByRole('alert')).toContainText('Зміни збережено');
-  await expect(actionDialog.getByRole('button', { name: 'Повторити', exact: true })).toBeVisible();
+  const update = actionDialog.getByRole('button', { name: /^(Повторити|Оновити файли)$/ });
+  await expect(update).toBeVisible();
   expect(api.postCalls()).toBe(1);
-  await actionDialog.getByRole('button', { name: 'Повторити', exact: true }).click();
+  await update.click();
   await showFiles(page);
   await expect(page.getByRole('button', { name: 'chapter.typ', exact: true })).toBeVisible();
   expect(api.postCalls()).toBe(1);
@@ -508,7 +705,7 @@ test('does not replay a structural action after conflict unless the user checks 
   await openWorkspace(page);
   await openNewFileDialog(page);
   await page.getByLabel('Назва файла', { exact: true }).fill('chapter.typ');
-  await page.getByRole('button', { name: 'Створити', exact: true }).click();
+  await submitNewFile(page);
   await page.getByRole('button', { name: 'Порівняти версії', exact: true }).click();
   const replay = page.getByLabel('Повторити дію: Створити chapter.typ', { exact: true });
   await expect(replay).toBeVisible();
@@ -540,8 +737,8 @@ test('does not auto-retry a rejected file action after same-account reauthentica
   await openWorkspace(page);
   await openNewFileDialog(page);
   await page.getByLabel('Назва файла', { exact: true }).fill('chapter.typ');
-  await page.getByRole('button', { name: 'Створити', exact: true }).click();
-  const actionDialog = page.getByRole('dialog', { name: 'Новий файл', exact: true });
+  await submitNewFile(page);
+  const actionDialog = await newFileSurface(page);
   await expect(actionDialog.getByRole('alert')).toContainText('Забагато запитів');
   expect(api.postCalls()).toBe(1);
   expireSession = true;
@@ -563,11 +760,13 @@ test('rejects a colliding path and prevents deleting the only main file', async 
   await openWorkspace(page);
   await openNewFileDialog(page);
   await page.getByLabel('Назва файла', { exact: true }).fill('notes.typ');
-  await expect(page.getByRole('button', { name: 'Створити', exact: true })).toBeDisabled();
+  if (await mobileLayout(page))
+    await expect(page.getByRole('button', { name: 'Створити файл', exact: true })).toBeDisabled();
+  else await submitNewFile(page);
   await expect(page.getByRole('alert')).toBeVisible();
   expect(api.postCalls()).toBe(0);
   await page.getByRole('button', { name: 'Скасувати', exact: true }).click();
-  await expect(page.getByRole('dialog', { name: 'Новий файл', exact: true })).toHaveCount(0);
+  await expect(page.getByLabel('Назва файла', { exact: true })).toHaveCount(0);
   await showFiles(page);
   await page.getByRole('button', { name: 'notes.typ', exact: true }).click();
   await expect(page.getByRole('dialog', { name: 'Файли', exact: true })).toHaveCount(0);

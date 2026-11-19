@@ -23,10 +23,17 @@ import {
 import TextEditor from './TextEditor.vue';
 import WorkspaceFiles from './WorkspaceFiles.vue';
 import ModalDialog from '../../shared/ui/ModalDialog.vue';
-import FileActionDialog from './FileActionDialog.vue';
+import FileActionDialog, { type WorkspaceFileAction } from './FileActionDialog.vue';
 import ResourceDialog from './ResourceDialog.vue';
 import type { ProjectUpload, StructureChange } from './workspace-api';
-import { parentFolder } from './file-path';
+import {
+  fileNameError,
+  filePathInFolder,
+  inFolder,
+  parentFolder,
+  projectFolders,
+} from './file-path';
+import { structureError } from './file-structure';
 import { ApiError } from '../../shared/api/client';
 import { matchesResourceType } from './resource-formats';
 import { createCompilationApi, type Diagnostic } from './compilation-api';
@@ -37,6 +44,8 @@ import WorkspaceDiagnostics from './WorkspaceDiagnostics.vue';
 import WorkspaceRestoreStatus from './WorkspaceRestoreStatus.vue';
 import WorkspaceTabs from './WorkspaceTabs.vue';
 import FileAddMenu from './FileAddMenu.vue';
+import WorkspaceMainMenu, { type WorkspaceMainMenuGroup } from './WorkspaceMainMenu.vue';
+import { createProjectsApi, titleError } from '../projects/projects-api';
 import { openPdfTab } from './pdf-tab';
 import './workspace.css';
 
@@ -241,6 +250,7 @@ watch([() => state.compilationRevision, () => state.status, canCompile], () => {
 });
 
 async function openContext() {
+  if (onlyOutput.value) viewMode.value = canSplit.value ? 'split' : 'code';
   await activateTab('context');
   await nextTick();
   if (contextOpen.value && !isMobile.value) contextInput.value?.focus({ preventScroll: true });
@@ -258,6 +268,169 @@ function openResource(action: ResourceAction, trigger?: HTMLElement) {
     return;
   }
   resourceAction.value = action;
+}
+const diagnosticsOpen = ref(false);
+const projectsApi = createProjectsApi(identitySession.request);
+const projectAction = ref<'rename' | 'delete' | null>(null);
+const projectTitle = ref('');
+const projectActionBusy = ref(false);
+const projectActionError = ref('');
+const projectTitleError = ref('');
+const menuGroups = computed<WorkspaceMainMenuGroup[]>(() => [
+  {
+    label: 'Файл',
+    items: [
+      { id: 'new-file', label: 'Створити файл', disabled: actionsDisabled.value },
+      { id: 'new-folder', label: 'Створити папку', disabled: actionsDisabled.value },
+      { id: 'upload', label: 'Завантажити файл…', disabled: actionsDisabled.value },
+      ...(compilation.state.artifact
+        ? [{ id: 'download-pdf', label: 'Завантажити PDF', separatorBefore: true }]
+        : []),
+    ],
+  },
+  {
+    label: 'Вигляд',
+    items: [
+      {
+        id: 'files',
+        label: 'Панель файлів',
+        checked: filesVisible.value && !onlyOutput.value,
+        disabled: !!inlineName.value,
+      },
+      {
+        id: 'code',
+        label: 'Лише код',
+        checked: effectiveViewMode.value === 'code',
+        separatorBefore: true,
+      },
+      ...(canSplit.value
+        ? [{ id: 'split', label: 'Код і PDF', checked: effectiveViewMode.value === 'split' }]
+        : []),
+      {
+        id: 'preview',
+        label: 'Лише PDF',
+        checked: effectiveViewMode.value === 'preview',
+        disabled: !!inlineName.value,
+      },
+      ...(compilation.state.diagnostics?.items.length
+        ? [
+            {
+              id: 'diagnostics',
+              label: 'Діагностика',
+              checked: diagnosticsOpen.value,
+              separatorBefore: true,
+            },
+          ]
+        : []),
+    ],
+  },
+  {
+    label: 'Проєкт',
+    items: [
+      { id: 'context', label: 'Контекст' },
+      { id: 'history', label: 'Історія версій' },
+      {
+        id: 'rename-project',
+        label: 'Перейменувати проєкт…',
+        separatorBefore: true,
+        disabled: !!fileAction.value || restoreLocked.value,
+      },
+      {
+        id: 'delete-project',
+        label: 'Видалити проєкт…',
+        danger: true,
+        disabled: !!fileAction.value || restoreLocked.value,
+      },
+    ],
+  },
+]);
+
+function runWorkspaceCommand(id: string, trigger: HTMLElement) {
+  trigger.focus({ preventScroll: true });
+  if (id === 'new-file' || id === 'new-folder') {
+    openFileAction(
+      {
+        kind: id === 'new-file' ? 'create' : 'createDirectory',
+        directory: creationDirectory.value,
+      },
+      trigger,
+    );
+  } else if (id === 'upload') openResource({ directory: creationDirectory.value }, trigger);
+  else if (id === 'download-pdf' && compilation.state.artifact)
+    downloadPdf(compilation.state.artifact);
+  else if (id === 'files') {
+    if (onlyOutput.value) viewMode.value = canSplit.value ? 'split' : 'code';
+    else if (filesVisible.value) {
+      filesVisible.value = false;
+      return;
+    }
+    filesVisible.value = true;
+  } else if (id === 'code' || id === 'split' || id === 'preview') viewMode.value = id;
+  else if (id === 'diagnostics') diagnosticsOpen.value = !diagnosticsOpen.value;
+  else if (id === 'context') void openContext();
+  else if (id === 'history') void router.push(`${workspacePath}/history`);
+  else if (id === 'rename-project' || id === 'delete-project') {
+    projectTitle.value = state.snapshot?.project.title ?? '';
+    projectTitleError.value = '';
+    projectActionError.value = '';
+    projectAction.value = id === 'rename-project' ? 'rename' : 'delete';
+    model.pauseAutosave(true);
+  }
+}
+
+function dismissProjectAction() {
+  if (projectActionBusy.value) return;
+  model.pauseAutosave(false);
+  projectAction.value = null;
+}
+
+async function submitProjectAction() {
+  const action = projectAction.value;
+  if (!action || projectActionBusy.value || state.status === 'saving') return;
+  if (action === 'rename') {
+    projectTitleError.value = titleError(projectTitle.value);
+    if (projectTitleError.value) {
+      document.getElementById('workspace-project-title')?.focus();
+      return;
+    }
+    if (projectTitle.value.trim() === state.snapshot?.project.title) {
+      dismissProjectAction();
+      return;
+    }
+  }
+  projectActionError.value = '';
+  projectActionBusy.value = true;
+  const signal = resourceController.signal;
+  try {
+    if (action === 'rename') {
+      const project = await projectsApi.rename(projectId, projectTitle.value, signal);
+      if (signal.aborted || !state.snapshot) return;
+      state.snapshot.project.title = project.title;
+      state.snapshot.project.updatedAt = project.updatedAt;
+      projectAction.value = null;
+      model.pauseAutosave(false);
+    } else {
+      try {
+        await projectsApi.remove(projectId, signal);
+      } catch (error) {
+        if (!(error instanceof ApiError) || error.status !== 404) throw error;
+      }
+      if (signal.aborted) return;
+      leaving = true;
+      projectAction.value = null;
+      await router.replace('/projects');
+    }
+  } catch (error) {
+    if (!signal.aborted)
+      projectActionError.value = workspaceError(
+        error,
+        action === 'rename'
+          ? 'Не вдалося перейменувати проєкт. Спробуйте ще раз.'
+          : 'Не вдалося видалити проєкт. Спробуйте ще раз.',
+      );
+  } finally {
+    projectActionBusy.value = false;
+  }
 }
 async function submitResource(input: { file: File; path: string }) {
   const action = resourceAction.value;
@@ -360,13 +533,23 @@ async function downloadResource() {
     downloading.value = false;
   }
 }
-type FileAction =
-  | { kind: 'create'; directory: string; fileId?: never }
-  | { kind: 'rename' | 'delete' | 'entrypoint'; fileId: number };
+type FileAction = WorkspaceFileAction;
+type InlineKind = 'create' | 'createDirectory' | 'rename' | 'renameDirectory';
+type TreeAction = FileAction['kind'] | 'replace' | 'upload';
 const fileAction = ref<FileAction | null>(null);
+const inlineName = ref<{
+  kind: InlineKind;
+  directory: string;
+  target?: number | string;
+  name: string;
+} | null>(null);
+const nameTransfer = ref<string | null>(null);
+const nameError = ref('');
+const actionAttempted = ref(false);
 const submittingFileAction = ref(false);
 let fileActionFocus: HTMLElement | null = null;
 let focusCreatedFile = false;
+let focusTreeTarget: number | string | undefined;
 let deferredFileAction: FileAction | null = null;
 const actionsDisabled = computed(
   () =>
@@ -375,32 +558,65 @@ const actionsDisabled = computed(
     state.fileLoading ||
     state.conflictLoading ||
     state.status === 'conflict' ||
+    state.status === 'saving' ||
+    !!fileAction.value ||
     state.structure.length > 0 ||
-    (!!state.pending && state.status !== 'saving'),
+    !!state.pending,
 );
 function fileDialogTrigger(trigger?: HTMLElement) {
-  if (isMobile.value) return document.querySelector<HTMLElement>('.editor-files-toggle');
+  if (isMobile.value && mobileFilesVisible.value)
+    return document.querySelector<HTMLElement>('.editor-files-toggle');
   return trigger ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
 }
 function openFileAction(action: FileAction, trigger?: HTMLElement) {
   if (actionsDisabled.value) return;
   focusCreatedFile = false;
+  focusTreeTarget = undefined;
+  actionAttempted.value = false;
+  nameTransfer.value = null;
+  nameError.value = '';
   fileActionFocus = fileDialogTrigger(trigger);
+  model.pauseAutosave(true);
+  if (
+    !isMobile.value &&
+    ['create', 'createDirectory', 'rename', 'renameDirectory'].includes(action.kind)
+  ) {
+    const path =
+      'directoryPath' in action
+        ? action.directoryPath
+        : state.snapshot?.tree.find((file) => file.fileId === action.fileId)?.path;
+    const directory = 'directory' in action ? action.directory : parentFolder(path ?? '');
+    const target = 'directoryPath' in action ? action.directoryPath : action.fileId;
+    if (onlyOutput.value) viewMode.value = canSplit.value ? 'split' : 'code';
+    desktopFilesVisible.value = true;
+    revealFolder(directory);
+    inlineName.value = {
+      kind: action.kind as InlineKind,
+      directory,
+      ...(target === undefined ? {} : { target }),
+      name: path?.split('/').at(-1) ?? '',
+    };
+  }
   if (isMobile.value && mobileFilesVisible.value) {
     deferredFileAction = action;
     mobileFilesVisible.value = false;
   } else fileAction.value = action;
 }
-function openTreeAction(
-  kind: 'rename' | 'delete' | 'entrypoint' | 'replace',
-  fileId: number,
-  trigger: HTMLElement,
-) {
-  const file = state.snapshot?.tree.find((entry) => entry.fileId === fileId);
+function openTreeAction(kind: TreeAction, target: number | string, trigger: HTMLElement) {
+  if (typeof target === 'string') {
+    if (kind === 'create' || kind === 'createDirectory')
+      openFileAction({ kind, directory: target }, trigger);
+    if (kind === 'upload') openResource({ directory: target }, trigger);
+    if (kind === 'renameDirectory' || kind === 'moveDirectory' || kind === 'deleteDirectory')
+      openFileAction({ kind, directoryPath: target }, trigger);
+    return;
+  }
+  const file = state.snapshot?.tree.find((entry) => entry.fileId === target);
   if (!file) return;
-  if (kind !== 'replace') openFileAction({ kind, fileId }, trigger);
-  else if (file.contentKind === 'binary')
-    openResource({ directory: parentFolder(file.path), path: file.path, fileId }, trigger);
+  if (kind === 'rename' || kind === 'move' || kind === 'delete' || kind === 'entrypoint')
+    openFileAction({ kind, fileId: target }, trigger);
+  if (kind === 'replace' && file.contentKind === 'binary')
+    openResource({ directory: parentFolder(file.path), path: file.path, fileId: target }, trigger);
 }
 function fileDrawerClosed() {
   if (deferredResource) {
@@ -414,24 +630,98 @@ function fileDrawerClosed() {
 }
 function dismissFileAction() {
   if (submittingFileAction.value || state.status === 'saving') return;
-  model.cancelStructure();
+  if (actionAttempted.value) model.cancelStructure();
+  model.pauseAutosave(false);
+  focusTreeTarget = inlineName.value?.target;
+  const inline = !!inlineName.value;
+  inlineName.value = null;
   fileAction.value = null;
+  if (inline) void nextTick(fileActionClosed);
 }
 function fileActionClosed() {
   if (fileAction.value) return;
+  const row =
+    typeof focusTreeTarget === 'undefined'
+      ? null
+      : document.querySelector<HTMLElement>(
+          `#workspace-files [data-tree-target="${CSS.escape(String(focusTreeTarget))}"]`,
+        );
   if (focusCreatedFile && !isMobile.value) editor.value?.focus();
+  else if (row && !isMobile.value) row.focus({ preventScroll: true });
   else if (fileActionFocus?.isConnected) fileActionFocus.focus();
   else document.querySelector<HTMLElement>('.editor-files-toggle')?.focus();
   fileActionFocus = null;
+  focusTreeTarget = undefined;
 }
+const inlineEdit = computed(
+  () =>
+    inlineName.value && {
+      ...inlineName.value,
+      error: nameError.value || (actionAttempted.value ? state.saveError : ''),
+      busy: submittingFileAction.value || state.status === 'saving',
+      locked: actionAttempted.value && !!state.pending,
+      retryLabel: state.status === 'refresh_failed' ? 'Оновити файли' : 'Повторити',
+    },
+);
+function updateInlineName(name: string) {
+  if (!inlineName.value) return;
+  inlineName.value.name = name;
+  nameError.value = '';
+  if (actionAttempted.value && state.status === 'failed') {
+    model.cancelStructure();
+    actionAttempted.value = false;
+  }
+}
+function submitInlineName() {
+  const edit = inlineEdit.value;
+  if (!edit || edit.busy || edit.locked) return;
+  const directory = edit.kind === 'createDirectory' || edit.kind === 'renameDirectory';
+  const name = edit.name;
+  nameError.value = fileNameError(name, directory);
+  if (nameError.value) return;
+  const path = filePathInFolder(edit.directory, name);
+  const currentPath =
+    edit.kind === 'renameDirectory'
+      ? edit.target
+      : state.snapshot?.tree.find((file) => file.fileId === edit.target)?.path;
+  if (path === currentPath) return dismissFileAction();
+  if (directory && directories.value.includes(path)) {
+    nameError.value = 'Папка з такою назвою вже існує.';
+    return;
+  }
+  if (
+    edit.kind === 'rename' &&
+    edit.target === state.snapshot?.mainFileId &&
+    !path.endsWith('.typ')
+  ) {
+    nameTransfer.value = name;
+    inlineName.value = null;
+    return;
+  }
+  void submitFileAction({ path });
+}
+let submittedPath: string | undefined;
 async function submitFileAction(input: { path?: string; replacementId?: number }) {
   const action = fileAction.value;
-  if (!action || submittingFileAction.value) return;
+  if (
+    !action ||
+    !state.snapshot ||
+    submittingFileAction.value ||
+    state.status === 'saving' ||
+    state.pending
+  )
+    return;
   const operations: StructureChange[] = [];
   if (action.kind === 'create' && input.path)
     operations.push({ type: 'createFile', path: input.path, content: '' });
-  if (action.kind === 'rename' && action.fileId && input.path)
+  if ((action.kind === 'rename' || action.kind === 'move') && input.path)
     operations.push({ type: 'renameFile', fileId: action.fileId, path: input.path });
+  if (action.kind === 'createDirectory' && input.path)
+    operations.push({ type: 'createDirectory', path: input.path });
+  if ((action.kind === 'renameDirectory' || action.kind === 'moveDirectory') && input.path)
+    operations.push({ type: 'renameDirectory', path: action.directoryPath, newPath: input.path });
+  if (action.kind === 'deleteDirectory')
+    operations.push({ type: 'deleteDirectory', path: action.directoryPath });
   if (action.kind === 'delete' && action.fileId)
     operations.push({ type: 'deleteFile', fileId: action.fileId });
   const main = state.snapshot?.tree.find(
@@ -439,33 +729,76 @@ async function submitFileAction(input: { path?: string; replacementId?: number }
   );
   if (main) operations.push({ type: 'setEntrypoint', path: main.path });
   if (!operations.length) return;
+  if (inlineName.value) {
+    nameError.value = structureError(operations, state.snapshot);
+    if (nameError.value) return;
+  }
+  submittedPath = input.path;
+  actionAttempted.value = true;
   submittingFileAction.value = true;
   try {
     const saved = await model.mutate(operations);
-    if (saved && action.kind === 'create') {
-      showCreatedFile();
-      focusCreatedFile = true;
-    }
-    if (saved || state.status === 'conflict') fileAction.value = null;
+    if (saved || state.status === 'conflict') finishFileAction(saved);
   } finally {
     submittingFileAction.value = false;
   }
 }
 async function retryFileAction() {
-  if (submittingFileAction.value) return;
+  if (submittingFileAction.value || !fileAction.value || !actionAttempted.value) return;
   submittingFileAction.value = true;
   try {
     await model.save();
-    if (!state.pending && !state.structure.length) {
-      if (fileAction.value?.kind === 'create') {
-        showCreatedFile();
-        focusCreatedFile = true;
-      }
-      fileAction.value = null;
-    } else if (state.status === 'conflict') fileAction.value = null;
+    if (!state.pending && !state.structure.length && !state.saveError) finishFileAction(true);
+    else if (state.status === 'conflict') finishFileAction(false);
   } finally {
     submittingFileAction.value = false;
   }
+}
+function finishFileAction(saved: boolean) {
+  const action = fileAction.value;
+  if (!action) return;
+  if (saved) {
+    if (action.kind === 'create') {
+      showCreatedFile();
+      focusCreatedFile = true;
+    } else if (action.kind === 'rename' || action.kind === 'move') {
+      if (submittedPath) revealFolder(parentFolder(submittedPath));
+      treeSelection.value = action.fileId;
+      focusTreeTarget = action.fileId;
+    } else if (
+      (action.kind === 'createDirectory' ||
+        action.kind === 'renameDirectory' ||
+        action.kind === 'moveDirectory') &&
+      submittedPath
+    ) {
+      if ('directoryPath' in action) {
+        const source = action.directoryPath;
+        const destination = submittedPath;
+        collapsedPaths.value = collapsedPaths.value.map((path) =>
+          path === source || inFolder(path, source)
+            ? destination + path.slice(source.length)
+            : path,
+        );
+      }
+      revealFolder(parentFolder(submittedPath));
+      treeSelection.value = submittedPath;
+      focusTreeTarget = submittedPath;
+    } else if (action.kind === 'deleteDirectory') {
+      const parent = parentFolder(action.directoryPath);
+      collapsedPaths.value = collapsedPaths.value.filter(
+        (path) => path !== action.directoryPath && !inFolder(path, action.directoryPath),
+      );
+      if (directories.value.includes(parent)) {
+        treeSelection.value = parent;
+        focusTreeTarget = parent;
+      }
+    }
+  }
+  const inline = !!inlineName.value;
+  model.pauseAutosave(false);
+  inlineName.value = null;
+  fileAction.value = null;
+  if (inline) void nextTick(fileActionClosed);
 }
 const mobileQuery = window.matchMedia('(max-width: 720px)');
 const isMobile = ref(mobileQuery.matches);
@@ -520,12 +853,42 @@ const selectedTreeFile = computed(() =>
 const selectedFolder = computed(() =>
   typeof treeSelection.value === 'string' ? treeSelection.value : null,
 );
+const directories = computed(() =>
+  projectFolders(state.snapshot?.tree ?? [], state.snapshot?.directories),
+);
+const fileActionDirty = computed(() => {
+  const action = fileAction.value;
+  if (!action) return false;
+  if (action.kind === 'deleteDirectory')
+    return (
+      state.snapshot?.tree.some(
+        (file) => inFolder(file.path, action.directoryPath) && dirtyIds.value.includes(file.fileId),
+      ) ?? false
+    );
+  return !!action.fileId && dirtyIds.value.includes(action.fileId);
+});
 const creationDirectory = computed(() => {
   if (selectedFolder.value !== null) return selectedFolder.value;
   const file = state.snapshot?.tree.find((entry) => entry.fileId === selectedTreeFile.value);
   return file ? parentFolder(file.path) : '';
 });
+function revealFolder(directory: string) {
+  collapsedPaths.value = collapsedPaths.value.filter(
+    (path) => directory !== path && !inFolder(directory, path),
+  );
+}
+function selectRoot(event: MouseEvent) {
+  treeSelection.value = null;
+  (event.currentTarget as HTMLElement).parentElement
+    ?.querySelector<HTMLElement>('.file-add-menu-host button')
+    ?.focus({ preventScroll: true });
+}
 function toggleFolder(path: string) {
+  if (
+    inlineName.value &&
+    (inlineName.value.directory === path || inFolder(inlineName.value.directory, path))
+  )
+    return;
   collapsedPaths.value = collapsedPaths.value.includes(path)
     ? collapsedPaths.value.filter((p) => p !== path)
     : [...collapsedPaths.value, path];
@@ -547,6 +910,10 @@ const dirtyIds = computed(() =>
 function viewportChanged(event: MediaQueryListEvent) {
   isMobile.value = event.matches;
   mobileFilesVisible.value = false;
+  if (event.matches && inlineName.value) {
+    nameTransfer.value = inlineName.value.name;
+    inlineName.value = null;
+  }
 }
 const tabs = computed(() => {
   const files = new Map(state.snapshot?.tree.map((file) => [file.fileId, file]));
@@ -578,7 +945,8 @@ function showTab(id: TabId) {
 function showCreatedFile() {
   const file = state.snapshot?.tree.find((entry) => entry.fileId === state.selectedId);
   if (!file) return;
-  collapsedPaths.value = collapsedPaths.value.filter((path) => !file.path.startsWith(`${path}/`));
+  if (onlyOutput.value) viewMode.value = canSplit.value ? 'split' : 'code';
+  revealFolder(parentFolder(file.path));
   treeSelection.value = file.fileId;
   showTab(file.fileId);
 }
@@ -635,7 +1003,7 @@ watch(
     const selection = treeSelection.value;
     if (
       (typeof selection === 'number' && !valid.has(selection)) ||
-      (typeof selection === 'string' && !tree.some((file) => file.path.startsWith(`${selection}/`)))
+      (typeof selection === 'string' && !directories.value.includes(selection))
     )
       treeSelection.value = null;
     const remaining = tabIds.value.filter((id) => id === 'context' || valid.has(id));
@@ -802,6 +1170,7 @@ onBeforeUnmount(() => {
           :aria-controls="isMobile ? undefined : 'workspace-files'"
           :aria-label="filesVisible ? 'Приховати файли' : 'Показати файли'"
           :title="filesVisible ? 'Приховати файли' : 'Показати файли'"
+          :disabled="!!inlineName"
           @click="filesVisible = !filesVisible"
         >
           <svg
@@ -920,6 +1289,7 @@ onBeforeUnmount(() => {
               title="Лише PDF"
               aria-label="Лише PDF"
               :aria-pressed="effectiveViewMode === 'preview'"
+              :disabled="!!inlineName"
               @click="viewMode = 'preview'"
             >
               <svg
@@ -939,6 +1309,7 @@ onBeforeUnmount(() => {
             role="status"
             >{{ compileStatus }}</span
           >
+          <WorkspaceMainMenu :groups="menuGroups" @command="runWorkspaceCommand" />
         </div>
       </div>
       <p v-if="pdfOpenError && !historyOpen" class="editor-notice" role="alert">
@@ -967,7 +1338,11 @@ onBeforeUnmount(() => {
         :retry-disabled="atRisk"
         @retry="retryRestore"
       />
-      <div v-if="state.saveError && !state.conflict" class="editor-notice" role="alert">
+      <div
+        v-if="state.saveError && !state.conflict && !(fileAction && actionAttempted)"
+        class="editor-notice"
+        role="alert"
+      >
         <div class="editor-notice-detail">
           <p>{{ state.saveError }}</p>
           <ul v-if="state.structureLabels.length">
@@ -1123,15 +1498,29 @@ onBeforeUnmount(() => {
         >
           <div class="editor-files-heading">
             <h2>Файли</h2>
+            <button
+              v-if="creationDirectory && !inlineName"
+              class="editor-files-root"
+              type="button"
+              aria-label="Вибрати корінь проєкту"
+              title="Вибрати корінь проєкту"
+              @click="selectRoot"
+            >
+              Корінь
+            </button>
             <FileAddMenu
               :disabled="actionsDisabled"
               :upload-disabled="state.status === 'saving'"
               @create="openFileAction({ kind: 'create', directory: creationDirectory })"
+              @create-directory="
+                openFileAction({ kind: 'createDirectory', directory: creationDirectory })
+              "
               @upload="openResource({ directory: creationDirectory })"
             />
           </div>
           <WorkspaceFiles
             :files="state.snapshot.tree"
+            :directories="directories"
             :selected-id="selectedTreeFile"
             :selected-folder="selectedFolder"
             :dirty-ids="dirtyIds"
@@ -1140,10 +1529,15 @@ onBeforeUnmount(() => {
             :disabled="actionsDisabled"
             :replace-disabled="state.status === 'saving'"
             :mobile="false"
+            v-bind="inlineEdit ? { inlineEdit } : {}"
             @toggle="toggleFolder"
             @select="selectTreeFile"
             @select-folder="treeSelection = $event"
             @action="openTreeAction"
+            @inline-input="updateInlineName"
+            @inline-submit="submitInlineName"
+            @inline-cancel="dismissFileAction"
+            @inline-retry="retryFileAction"
           />
         </aside>
         <section v-show="!onlyOutput" class="editor-source" aria-label="Редактор файла">
@@ -1268,6 +1662,7 @@ onBeforeUnmount(() => {
       </div>
       <WorkspaceDiagnostics
         v-if="!state.conflict"
+        v-model:open="diagnosticsOpen"
         :result="compilation.state.diagnostics"
         :can-open-file="canOpenDiagnostic"
         @source="openDiagnostic"
@@ -1299,10 +1694,14 @@ onBeforeUnmount(() => {
             :disabled="actionsDisabled"
             :upload-disabled="state.status === 'saving'"
             @create="openFileAction({ kind: 'create', directory: creationDirectory })"
+            @create-directory="
+              openFileAction({ kind: 'createDirectory', directory: creationDirectory })
+            "
             @upload="openResource({ directory: creationDirectory })"
           />
           <WorkspaceFiles
             :files="state.snapshot.tree"
+            :directories="directories"
             :selected-id="selectedTreeFile"
             :selected-folder="selectedFolder"
             :dirty-ids="dirtyIds"
@@ -1319,14 +1718,16 @@ onBeforeUnmount(() => {
         </ModalDialog>
       </div>
       <FileActionDialog
-        :open="!!fileAction"
+        :open="!!fileAction && !inlineName"
         :action="fileAction"
+        v-bind="nameTransfer === null ? {} : { initialName: nameTransfer }"
         :files="state.snapshot.tree"
+        :directories="directories"
         :main-file-id="state.snapshot.mainFileId"
-        :dirty="!!fileAction?.fileId && dirtyIds.includes(fileAction.fileId)"
+        :dirty="fileActionDirty"
         :busy="submittingFileAction || state.status === 'saving'"
-        :locked="!!state.pending && state.status !== 'saving'"
-        :error="state.saveError"
+        :locked="actionAttempted && !!state.pending && state.status !== 'saving'"
+        :error="actionAttempted ? state.saveError : ''"
         @submit="submitFileAction"
         @retry="retryFileAction"
         @dismiss="dismissFileAction"
@@ -1337,6 +1738,7 @@ onBeforeUnmount(() => {
         :replacement-path="resourceAction?.path"
         :directory="resourceAction?.directory ?? ''"
         :files="state.snapshot.tree"
+        :directories="directories"
         :busy="resourceBusy || state.status === 'saving'"
         :uploading="resourceUploading"
         :locked="resourceAttempted && !!state.pending && state.status !== 'saving'"
@@ -1346,6 +1748,78 @@ onBeforeUnmount(() => {
         @dismiss="dismissResource"
         @closed="resourceClosed"
       />
+      <ModalDialog
+        :open="!!projectAction"
+        :title="projectAction === 'delete' ? 'Видалити проєкт?' : 'Перейменувати проєкт'"
+        :busy="projectActionBusy"
+        dialog-class="workspace-project-dialog"
+        @dismiss="dismissProjectAction"
+      >
+        <form v-if="projectAction" novalidate @submit.prevent="submitProjectAction">
+          <template v-if="projectAction === 'delete'">
+            <p class="workspace-project-delete-name">{{ state.snapshot.project.title }}</p>
+            <p id="workspace-project-delete-warning" class="muted">
+              Проєкт і його файли стануть недоступними. Скасувати цю дію в застосунку неможливо.
+            </p>
+            <p v-if="workspaceAtRisk" id="workspace-project-draft-warning" class="field-error">
+              Незбережені правки буде втрачено.
+            </p>
+          </template>
+          <div v-else class="form-field">
+            <label for="workspace-project-title">Назва</label>
+            <input
+              id="workspace-project-title"
+              v-model="projectTitle"
+              autofocus
+              autocomplete="off"
+              :disabled="projectActionBusy"
+              :aria-invalid="!!projectTitleError"
+              :aria-describedby="projectTitleError ? 'workspace-project-title-error' : undefined"
+              @input="projectTitleError = ''"
+            />
+            <p
+              v-if="projectTitleError"
+              id="workspace-project-title-error"
+              class="field-error"
+              role="alert"
+            >
+              {{ projectTitleError }}
+            </p>
+          </div>
+          <p v-if="projectActionError" class="field-error" role="alert">{{ projectActionError }}</p>
+          <div class="modal-actions">
+            <button
+              type="button"
+              class="button button-secondary"
+              :autofocus="projectAction === 'delete'"
+              :disabled="projectActionBusy"
+              @click="dismissProjectAction"
+            >
+              Скасувати
+            </button>
+            <button
+              type="submit"
+              :class="['button', projectAction === 'delete' ? 'button-danger' : 'button-primary']"
+              :disabled="projectActionBusy || state.status === 'saving'"
+              :aria-describedby="
+                projectAction === 'delete'
+                  ? workspaceAtRisk
+                    ? 'workspace-project-delete-warning workspace-project-draft-warning'
+                    : 'workspace-project-delete-warning'
+                  : undefined
+              "
+            >
+              {{
+                projectActionBusy
+                  ? 'Зачекайте…'
+                  : projectAction === 'delete'
+                    ? 'Видалити'
+                    : 'Зберегти'
+              }}
+            </button>
+          </div>
+        </form>
+      </ModalDialog>
     </template>
   </section>
 </template>

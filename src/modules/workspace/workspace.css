@@ -457,6 +457,21 @@
   font-size: 12px;
   color: var(--color-muted);
 }
+.editor-files-root {
+  margin-left: auto;
+  min-height: 30px;
+  padding: 3px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-muted);
+  font: inherit;
+  font-size: 12px;
+}
+.editor-files-root:hover {
+  background: #e8f2f6;
+  color: var(--color-text);
+}
 .file-icon-button {
   display: inline-flex;
   align-items: center;
@@ -552,6 +567,26 @@
   gap: 6px;
   padding: 0;
 }
+.workspace-project-dialog {
+  max-width: min(420px, calc(100vw - 24px));
+}
+.workspace-action-dialog {
+  width: min(420px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+}
+@media (max-width: 720px) {
+  .workspace-action-dialog {
+    width: min(520px, 100vw);
+    max-height: 85dvh;
+    margin: auto auto 0;
+    padding: 22px 18px calc(22px + env(safe-area-inset-bottom));
+    border-radius: 14px 14px 0 0;
+  }
+}
+.workspace-project-delete-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
 .workspace-compile-status {
   margin-inline: 4px;
   color: var(--color-muted);
@@ -638,6 +673,9 @@
     padding: 2px 12px;
     margin-inline: -8px -12px;
     border-top: 1px solid var(--color-border);
+  }
+  .workspace-command-bar .workspace-main-menu {
+    margin-inline-start: auto;
   }
   .workspace-compile-status {
     margin-left: auto;

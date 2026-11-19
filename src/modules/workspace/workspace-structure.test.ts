@@ -153,6 +153,25 @@ it('requires replacement of a deleted main file and deletes its dirty text only 
   expect(state.snapshot!.mainFileId).toBe(2);
 });
 
+it('requires a new deletion confirmation after someone adds a file to the folder', async () => {
+  const { api, model, state } = fixture();
+  const before = { ...snapshot(), directories: ['drafts'] };
+  const current = {
+    ...snapshot(11),
+    tree: [...before.tree, file(3, 'drafts/new.typ')],
+    directories: ['drafts'],
+  };
+  vi.mocked(api.state).mockResolvedValueOnce(before).mockResolvedValueOnce(current);
+  vi.mocked(api.save).mockRejectedValueOnce(new ApiError(409, 'REVISION_CONFLICT', '', null));
+  await model.load();
+  await model.mutate([{ type: 'deleteDirectory', path: 'drafts' }]);
+  await model.compare();
+  expect(state.conflict?.structure[0]).toMatchObject({
+    include: false,
+    error: 'Вміст папки змінився на сервері. Перегляньте його перед видаленням.',
+  });
+});
+
 it('does not permit new edits in a pending deletion and retains the text for recovery on failure', async () => {
   const { api, model, state } = fixture();
   await model.load();

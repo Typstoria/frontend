@@ -304,7 +304,7 @@ async function openResources(page: Page) {
     const toggle = page.getByRole('button', { name: /(?:Показати|Приховати) файли/ });
     if ((await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click();
   }
-  await page.getByRole('button', { name: 'Додати файл', exact: true }).click();
+  await page.getByRole('button', { name: 'Додати до проєкту', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Завантажити файл', exact: true }).click();
   await expect(page.getByRole('dialog', { name: 'Завантажити файл', exact: true })).toBeVisible();
   await expect(page.getByRole('dialog', { name: 'Файли', exact: true })).toHaveCount(0);

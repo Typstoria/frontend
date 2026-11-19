@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import ModalDialog from '../../shared/ui/ModalDialog.vue';
-import { fileNameError, filePathError, filePathInFolder, projectFolders } from './file-path';
+import FolderPicker from './FolderPicker.vue';
+import { fileNameError, filePathError, filePathInFolder } from './file-path';
 import type { Snapshot } from './workspace-api';
 
 import { compatibleResourcePaths, maxResourceBytes, resourceAccept } from './resource-formats';
@@ -10,6 +11,7 @@ const props = defineProps<{
   open: boolean;
   replacementPath?: string | undefined;
   directory: string;
+  directories: string[];
   files: Snapshot['tree'];
   busy: boolean;
   uploading: boolean;
@@ -29,13 +31,17 @@ const fileName = ref('');
 const fileNameEdited = ref(false);
 const isReplacement = computed(() => props.replacementPath !== undefined);
 const path = computed(() => filePathInFolder(targetDirectory.value, fileName.value));
-const folderSuggestions = computed(() => projectFolders(props.files));
 const nameError = computed(() =>
   !isReplacement.value && (file.value || fileName.value) ? fileNameError(fileName.value) : '',
 );
 const pathError = computed(() =>
   !isReplacement.value && fileName.value && !nameError.value
-    ? filePathError(path.value, props.files)
+    ? filePathError(path.value, props.files) ||
+      (props.directories.some(
+        (directory) => directory.normalize('NFC') === path.value.normalize('NFC'),
+      )
+        ? 'Папка з такою назвою вже існує.'
+        : '')
     : '',
 );
 const validationError = computed(() => {
@@ -91,6 +97,7 @@ function dismiss() {
     :open="open"
     :title="isReplacement ? 'Замінити файл' : 'Завантажити файл'"
     :busy="busy && !uploading"
+    dialog-class="workspace-action-dialog"
     @dismiss="dismiss"
     @closed="emit('closed')"
   >
@@ -126,22 +133,13 @@ function dismiss() {
         <p class="field-hint">Вибраний файл замінить вміст цього ресурсу.</p>
       </div>
       <template v-else>
-        <div class="form-field">
-          <label for="resource-directory">Папка</label>
-          <input
-            id="resource-directory"
-            v-model="targetDirectory"
-            list="resource-folders"
-            placeholder="Корінь проєкту"
-            autocomplete="off"
-            :disabled="busy || locked"
-            :aria-invalid="!!pathError"
-            :aria-describedby="pathError ? 'resource-error' : undefined"
-          />
-          <datalist id="resource-folders">
-            <option v-for="folder in folderSuggestions" :key="folder" :value="folder" />
-          </datalist>
-        </div>
+        <FolderPicker
+          id="resource-directory"
+          v-model="targetDirectory"
+          label="Папка"
+          :directories="directories"
+          :disabled="busy || locked"
+        />
         <div class="form-field">
           <label for="resource-file-name">Назва файла</label>
           <input

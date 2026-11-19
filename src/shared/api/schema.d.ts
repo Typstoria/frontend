@@ -1093,6 +1093,31 @@ export interface components {
        */
       idToken: string;
     };
+    CreateDirectoryDto: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      type: 'createDirectory';
+      path: string;
+    };
+    RenameDirectoryDto: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      type: 'renameDirectory';
+      path: string;
+      newPath: string;
+    };
+    DeleteDirectoryDto: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      type: 'deleteDirectory';
+      path: string;
+    };
     AttachFileDto: {
       /**
        * Format: int32
@@ -1199,6 +1224,9 @@ export interface components {
        */
       summary?: string;
       operations: (
+        | components['schemas']['CreateDirectoryDto']
+        | components['schemas']['RenameDirectoryDto']
+        | components['schemas']['DeleteDirectoryDto']
         | components['schemas']['AttachFileDto']
         | components['schemas']['ReplaceFileDto']
         | components['schemas']['CreateTextFileDto']
@@ -1357,6 +1385,7 @@ export interface components {
       revision: components['schemas']['ProjectRevisionDto'];
       contextText: string;
       tree: components['schemas']['ProjectFileDto'][];
+      directories: string[];
     };
     ProjectTextFileDto: {
       /**
@@ -1466,6 +1495,10 @@ export interface components {
       /** @enum {string|null} */
       patchOmittedReason: 'BINARY' | 'TEXT_TOO_LARGE' | 'PATCH_LIMIT' | 'COMPUTATION_LIMIT' | null;
     };
+    DirectoryDiffDto: {
+      added: string[];
+      deleted: string[];
+    };
     ContextDiffDto: {
       patch: string | null;
       /** @enum {string|null} */
@@ -1501,6 +1534,7 @@ export interface components {
       /** @enum {string} */
       toHistorySyncStatus: 'pending' | 'ready' | 'failed';
       files: components['schemas']['FileDiffDto'][];
+      directories: components['schemas']['DirectoryDiffDto'];
       context: components['schemas']['ContextDiffDto'];
       entrypoint: components['schemas']['EntrypointDiffDto'];
     };
@@ -1567,6 +1601,9 @@ export interface components {
        */
       summary?: string;
       operations: (
+        | components['schemas']['CreateDirectoryDto']
+        | components['schemas']['RenameDirectoryDto']
+        | components['schemas']['DeleteDirectoryDto']
         | components['schemas']['AttachFileDto']
         | components['schemas']['ReplaceFileDto']
         | components['schemas']['CreateTextFileDto']
@@ -1642,6 +1679,9 @@ export interface components {
        */
       summary?: string;
       operations: (
+        | components['schemas']['CreateDirectoryDto']
+        | components['schemas']['RenameDirectoryDto']
+        | components['schemas']['DeleteDirectoryDto']
         | components['schemas']['AttachFileDto']
         | components['schemas']['ReplaceFileDto']
         | components['schemas']['CreateTextFileDto']
@@ -1666,6 +1706,9 @@ export interface components {
        */
       summary?: string;
       operations: (
+        | components['schemas']['CreateDirectoryDto']
+        | components['schemas']['RenameDirectoryDto']
+        | components['schemas']['DeleteDirectoryDto']
         | components['schemas']['AttachFileDto']
         | components['schemas']['ReplaceFileDto']
         | components['schemas']['CreateTextFileDto']
@@ -1680,6 +1723,9 @@ export interface components {
     };
     ProposalCandidateDto: {
       operations: (
+        | components['schemas']['CreateDirectoryDto']
+        | components['schemas']['RenameDirectoryDto']
+        | components['schemas']['DeleteDirectoryDto']
         | components['schemas']['AttachFileDto']
         | components['schemas']['ReplaceFileDto']
         | components['schemas']['CreateTextFileDto']
@@ -1713,6 +1759,7 @@ export interface components {
       candidateManifestHash: string;
       contextText: string;
       tree: components['schemas']['ProjectFileDto'][];
+      directories: string[];
     };
     ProposalTextFileDto: {
       /**
@@ -1731,6 +1778,7 @@ export interface components {
     };
     ProposalDiffDto: {
       files: components['schemas']['FileDiffDto'][];
+      directories: components['schemas']['DirectoryDiffDto'];
       context: components['schemas']['ContextDiffDto'];
       entrypoint: components['schemas']['EntrypointDiffDto'];
       /**

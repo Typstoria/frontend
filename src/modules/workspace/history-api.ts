@@ -49,6 +49,10 @@ function parseRevision(value: unknown, projectId: number): Revision {
 }
 
 function parseDiff(value: unknown, fromId: number, toId: number): RevisionDiff {
+  const directories =
+    value && typeof value === 'object' && 'directories' in value
+      ? ((value as { directories?: unknown }).directories ?? { added: [], deleted: [] })
+      : { added: [], deleted: [] };
   if (
     !record(value) ||
     value.fromRevisionId !== fromId ||
@@ -56,6 +60,13 @@ function parseDiff(value: unknown, fromId: number, toId: number): RevisionDiff {
     !['pending', 'ready', 'failed'].includes(String(value.fromHistorySyncStatus)) ||
     !['pending', 'ready', 'failed'].includes(String(value.toHistorySyncStatus)) ||
     !Array.isArray(value.files) ||
+    !record(directories) ||
+    !Array.isArray(directories.added) ||
+    !Array.isArray(directories.deleted) ||
+    [...directories.added, ...directories.deleted].some(
+      (path) =>
+        typeof path !== 'string' || path.length === 0 || path.startsWith('/') || path.endsWith('/'),
+    ) ||
     !record(value.context) ||
     typeof value.context.changed !== 'boolean' ||
     !(value.context.patch === null || typeof value.context.patch === 'string') ||
@@ -105,7 +116,7 @@ function parseDiff(value: unknown, fromId: number, toId: number): RevisionDiff {
       invalid();
     fileIds.add(file.fileId);
   }
-  return value as RevisionDiff;
+  return { ...value, directories } as RevisionDiff;
 }
 
 function parseRestored(value: unknown, projectId: number, targetId: number): RestoredRevision {
