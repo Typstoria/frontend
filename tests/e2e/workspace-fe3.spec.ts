@@ -437,6 +437,101 @@ test('preserves the PDF page and scroll position when switching to diagnostics',
   await expect.poll(() => frame.evaluate((element) => element.scrollTop)).toBe(scrollTop);
 });
 
+test('resizes desktop panes with pointer and keyboard, restores sizes and resets the layout', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name === 'mobile', 'The file and split handles require desktop panes');
+  await installWorkspace(page);
+  await page.goto('/projects/1');
+  const sidebar = page.getByRole('separator', { name: 'Змінити ширину панелі файлів' });
+  const split = page.getByRole('separator', { name: 'Змінити співвідношення коду й PDF' });
+  await expect(sidebar).toHaveAttribute('aria-valuenow', '240');
+  const initialSplit = await split.getAttribute('aria-valuenow');
+  const bounds = (await sidebar.boundingBox())!;
+  await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + 50);
+  await page.mouse.down();
+  await page.mouse.move(bounds.x + bounds.width / 2 + 64, bounds.y + 50, { steps: 4 });
+  await page.mouse.up();
+  await expect(sidebar).toHaveAttribute('aria-valuenow', '304');
+  await expect
+    .poll(() => page.locator('#workspace-files').evaluate((node) => node.clientWidth))
+    .toBe(304);
+
+  const beforeKeys = Number(await split.getAttribute('aria-valuenow'));
+  await split.press('ArrowRight');
+  await expect(split).toHaveAttribute('aria-valuenow', String(beforeKeys + 16));
+  await split.press('Home');
+  await expect(split).toHaveAttribute('aria-valuenow', '300');
+  await page.reload();
+  await expect(sidebar).toHaveAttribute('aria-valuenow', '304');
+  await expect(split).toHaveAttribute('aria-valuenow', '300');
+
+  const viewport = page.viewportSize()!;
+  await page.setViewportSize({ width: 900, height: viewport.height });
+  await expect(split).toHaveCount(0);
+  await page.setViewportSize(viewport);
+  await expect(split).toHaveAttribute('aria-valuenow', '300');
+  await page.getByRole('button', { name: 'Вигляд', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Скинути розкладку' }).click();
+  await expect(sidebar).toHaveAttribute('aria-valuenow', '240');
+  await expect(split).toHaveAttribute('aria-valuenow', initialSplit!);
+});
+
+test('restores PDF zoom, reading position, tab order and diagnostics height after reload', async ({
+  page,
+}) => {
+  await installWorkspace(page);
+  await page.route('**/api/projects/1/compilations/latest-pdf', (route) =>
+    route.fulfill({
+      json: {
+        revisionNumber: 1,
+        job: job(100, 'succeeded', {
+          diagnostics: [
+            {
+              fileId: 10,
+              path: 'main.typ',
+              severity: 'warning',
+              message: 'Test warning',
+              range: null,
+            },
+          ],
+        }),
+      },
+    }),
+  );
+  await page.route('**/api/projects/1/compilations/50/pdf', (route) =>
+    route.fulfill({ contentType: 'application/pdf', body: pdfFixture(900, 3) }),
+  );
+  await page.goto('/projects/1');
+  await page.getByRole('button', { name: 'Контекст', exact: true }).click();
+  const context = page.getByRole('tab', { name: 'Контекст', exact: true });
+  await context.press('Alt+ArrowLeft');
+  const preview = page.getByRole('button', { name: 'Лише PDF', exact: true });
+  await preview.click();
+  const diagnostics = page.getByRole('button', { name: 'Діагностика (1)', exact: true });
+  await diagnostics.click();
+  const diagnosticsResize = page.getByRole('separator', { name: 'Висота діагностики' });
+  await diagnosticsResize.press('ArrowUp');
+  const height = await diagnosticsResize.getAttribute('aria-valuenow');
+  const frame = page.locator('.pdf-page-frame');
+  const zoom = page.locator('.pdf-zoom-value');
+  await page.getByRole('button', { name: 'Зменшити масштаб', exact: true }).click();
+  const chosenZoom = await zoom.textContent();
+  await scrollPageIntoView(frame, 2);
+  const pageIndicator = page.locator('.pdf-page-indicator');
+  await expect(pageIndicator).toHaveText('2 / 3');
+
+  await page.reload();
+  await expect(preview).toHaveAttribute('aria-pressed', 'true');
+  await expect(pageIndicator).toHaveText('2 / 3');
+  await expect(zoom).toHaveText(chosenZoom!);
+  await diagnostics.click();
+  await expect(diagnosticsResize).toHaveAttribute('aria-valuenow', height!);
+  await page.getByRole('button', { name: 'Лише код', exact: true }).click();
+  await expect(context).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('tab').first()).toHaveAccessibleName('Контекст');
+});
+
 test('keeps the reading point and zoom when replacing a PDF', async ({ page }) => {
   await installWorkspace(page);
   const pdfs = [

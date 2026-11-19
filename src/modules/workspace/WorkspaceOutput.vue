@@ -2,16 +2,19 @@
 import { computed, defineAsyncComponent, onBeforeUnmount, ref, shallowRef, watch } from 'vue';
 import type { createCompilationModel } from './compilation-model';
 import { compilationRetryLabels } from './compilation-model';
+import type { PdfView } from './pdf-layout';
 
 const PdfDocument = defineAsyncComponent(() => import('./PdfDocument.vue'));
 const props = defineProps<{
   output: ReturnType<typeof createCompilationModel>['state'];
+  initialView?: PdfView | undefined;
 }>();
 type Artifact = NonNullable<typeof props.output.artifact>;
 const emit = defineEmits<{
   retry: [];
   download: [artifact: Artifact];
   open: [artifact: Artifact];
+  viewChange: [view: PdfView];
 }>();
 const displayedArtifact = shallowRef<Artifact | null>(null);
 function setDisplayedPdf(pdf: Blob) {
@@ -106,7 +109,12 @@ onBeforeUnmount(() => {
       </button>
     </div>
     <div v-if="output.artifact" class="workspace-output-pdf">
-      <PdfDocument :pdf="output.artifact.pdf" @displayed="setDisplayedPdf" />
+      <PdfDocument
+        :pdf="output.artifact.pdf"
+        :initial-view="initialView"
+        @displayed="setDisplayedPdf"
+        @view-change="emit('viewChange', $event)"
+      />
     </div>
     <div
       v-else-if="output.busy && showInitialSkeleton"

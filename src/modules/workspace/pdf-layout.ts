@@ -6,6 +6,7 @@ export type PdfAnchor = {
   y: number;
   gap: number;
 };
+export type PdfView = { zoom: number | null; anchor: PdfAnchor | null };
 export type PdfLayout = {
   scale: number;
   maxScale: number;

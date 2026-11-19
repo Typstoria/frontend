@@ -42,12 +42,21 @@ import { compilationRetryLabels, createCompilationModel } from './compilation-mo
 import { createHistoryApi } from './history-api';
 import WorkspaceOutput from './WorkspaceOutput.vue';
 import WorkspaceDiagnostics from './WorkspaceDiagnostics.vue';
+import WorkspaceSeparator from './WorkspaceSeparator.vue';
 import WorkspaceRestoreStatus from './WorkspaceRestoreStatus.vue';
 import WorkspaceTabs from './WorkspaceTabs.vue';
 import FileAddMenu from './FileAddMenu.vue';
 import WorkspaceMainMenu, { type WorkspaceMainMenuGroup } from './WorkspaceMainMenu.vue';
 import { createProjectsApi, titleError } from '../projects/projects-api';
 import { openPdfTab } from './pdf-tab';
+import type { PdfView } from './pdf-layout';
+import {
+  createWorkspacePreferences,
+  defaultPanelSizes,
+  type PanelSizes,
+  type TabId,
+  type ViewMode,
+} from './workspace-preferences';
 import './workspace.css';
 
 const WorkspaceHistory = defineAsyncComponent(() => import('./WorkspaceHistory.vue'));
@@ -55,6 +64,11 @@ const route = useRoute();
 const router = useRouter();
 const projectId = Number(route.params.projectId);
 const ownerId = identitySession.user.value!.id;
+const preferences = createWorkspacePreferences(ownerId, projectId);
+const panelSizes = ref<PanelSizes>(preferences.panels);
+const preferredMode = ref(preferences.project.mode);
+const pdfView = ref<PdfView | undefined>(preferences.project.pdf);
+const preferencesReady = ref(false);
 const model = createWorkspaceModel(projectId, createWorkspaceApi(identitySession.request));
 const { state, atRisk } = model;
 const workspacePath = `/projects/${projectId}`;
@@ -95,10 +109,12 @@ const compileStatus = computed(() => {
   const output = compilation.state;
   return output.artifact ? 'Оновлення PDF…' : 'Підготовка PDF…';
 });
-type ViewMode = 'code' | 'split' | 'preview';
 const splitQuery = window.matchMedia('(min-width: 1024px)');
 const canSplit = ref(splitQuery.matches);
-const viewMode = ref<ViewMode>(canSplit.value ? 'split' : 'code');
+const viewMode = computed<ViewMode>({
+  get: () => preferredMode.value ?? (canSplit.value ? 'split' : 'code'),
+  set: (mode) => (preferredMode.value = mode === 'split' ? undefined : mode),
+});
 const pdfOpenError = ref('');
 const restoreLocked = computed(() => restoring.value || !!restoreAttempt.value);
 let workspaceLoaded = false;
@@ -116,7 +132,6 @@ const canCompile = computed(
 );
 const resourceApi = createResourceApi(identitySession.request);
 const resourceController = new AbortController();
-type TabId = number | 'context';
 const tabIds = ref<TabId[]>([]);
 const activeTab = ref<TabId | null>(null);
 const contextOpen = computed(() => activeTab.value === 'context');
@@ -325,6 +340,9 @@ const menuGroups = computed<WorkspaceMainMenuGroup[]>(() => [
             },
           ]
         : []),
+      ...(layoutCustomized.value
+        ? [{ id: 'reset-layout', label: 'Скинути розкладку', separatorBefore: true }]
+        : []),
     ],
   },
   {
@@ -370,6 +388,7 @@ function runWorkspaceCommand(id: string, trigger: HTMLElement) {
     filesVisible.value = true;
   } else if (id === 'code' || id === 'split' || id === 'preview') viewMode.value = id;
   else if (id === 'diagnostics') diagnosticsOpen.value = !diagnosticsOpen.value;
+  else if (id === 'reset-layout') resetLayout();
   else if (id === 'context') void openContext();
   else if (id === 'history') void router.push(`${workspacePath}/history`);
   else if (id === 'rename-project' || id === 'delete-project') {
@@ -890,7 +909,7 @@ function downloadPdf(artifact: NonNullable<typeof compilation.state.artifact>) {
   }
   downloadBlob(artifact.pdf, `document-v${artifact.revision.number}.pdf`);
 }
-const desktopFilesVisible = ref(true);
+const desktopFilesVisible = ref(preferences.project.filesVisible);
 const mobileFilesVisible = ref(false);
 const collapsedPaths = ref<string[]>([]);
 const treeSelection = ref<number | string | null>(null);
@@ -947,6 +966,97 @@ const filesVisible = computed({
     else desktopFilesVisible.value = value;
   },
 });
+const workspaceElement = ref<HTMLElement | null>(null);
+const layoutElement = ref<HTMLElement | null>(null);
+const layoutWidth = ref(window.innerWidth);
+const availableHeight = ref(window.innerHeight);
+const separatorWidth = 6;
+const minFilesWidth = 160;
+const minContentWidth = 300;
+const showDesktopFiles = computed(() => !isMobile.value && filesVisible.value && !onlyOutput.value);
+const showSplit = computed(() => effectiveViewMode.value === 'split');
+const maxFilesWidth = computed(() => {
+  const remaining = showSplit.value
+    ? 2 * minContentWidth + 2 * separatorWidth
+    : minContentWidth + separatorWidth;
+  return Math.max(minFilesWidth, Math.min(420, layoutWidth.value - remaining));
+});
+const filesWidth = computed(() => Math.min(panelSizes.value.filesWidth, maxFilesWidth.value));
+const splitWidth = computed(
+  () =>
+    layoutWidth.value -
+    (showDesktopFiles.value ? filesWidth.value + separatorWidth : 0) -
+    separatorWidth,
+);
+const minCodeWidth = computed(() => Math.min(minContentWidth, Math.floor(splitWidth.value / 2)));
+const maxCodeWidth = computed(() => splitWidth.value - minCodeWidth.value);
+function widthForRatio(ratio: number) {
+  return Math.max(
+    minCodeWidth.value,
+    Math.min(maxCodeWidth.value, Math.round(splitWidth.value * ratio)),
+  );
+}
+const codeWidth = computed(() => widthForRatio(panelSizes.value.codeRatio));
+const defaultCodeWidth = computed(() => widthForRatio(defaultPanelSizes.codeRatio));
+const maxDiagnosticsHeight = computed(() =>
+  Math.max(0, Math.min(480, Math.floor(availableHeight.value * 0.55), availableHeight.value - 190)),
+);
+const layoutCustomized = computed(
+  () =>
+    panelSizes.value.filesWidth !== defaultPanelSizes.filesWidth ||
+    panelSizes.value.codeRatio !== defaultPanelSizes.codeRatio ||
+    panelSizes.value.diagnosticsHeight !== null ||
+    !desktopFilesVisible.value ||
+    preferredMode.value !== undefined,
+);
+
+watch(
+  [workspaceElement, layoutElement],
+  ([workspace, layout], _, onCleanup) => {
+    if (!workspace || !layout) return;
+    function measure() {
+      if (!workspace || !layout) return;
+      layoutWidth.value = layout.clientWidth;
+      availableHeight.value = Math.floor(
+        workspace.getBoundingClientRect().bottom - layout.getBoundingClientRect().top,
+      );
+    }
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(workspace);
+    observer.observe(layout);
+    onCleanup(() => observer.disconnect());
+  },
+  { flush: 'post' },
+);
+
+function resizeCode(width: number) {
+  panelSizes.value.codeRatio =
+    width === defaultCodeWidth.value ? defaultPanelSizes.codeRatio : width / splitWidth.value;
+}
+
+function resetLayout() {
+  panelSizes.value = { ...defaultPanelSizes };
+  preferredMode.value = undefined;
+  desktopFilesVisible.value = true;
+  mobileFilesVisible.value = false;
+}
+
+watch(panelSizes, preferences.savePanels, { deep: true, flush: 'sync' });
+watch(
+  [preferencesReady, desktopFilesVisible, preferredMode, tabIds, activeTab, pdfView],
+  () => {
+    if (!preferencesReady.value) return;
+    preferences.saveProject({
+      filesVisible: desktopFilesVisible.value,
+      ...(preferredMode.value ? { mode: preferredMode.value } : {}),
+      tabs: tabIds.value,
+      activeTab: activeTab.value,
+      ...(pdfView.value ? { pdf: pdfView.value } : {}),
+    });
+  },
+  { deep: true, flush: 'sync' },
+);
 const editor = ref<InstanceType<typeof TextEditor> | null>(null);
 const emptyMainFileAction = ref<HTMLButtonElement | null>(null);
 const dirtyIds = computed(() =>
@@ -1176,7 +1286,19 @@ function initializeWorkspaceOutput() {
 async function loadWorkspace() {
   await model.load(takeWorkspaceRecovery(ownerId, projectId));
   if (restoreController.signal.aborted || !state.snapshot || state.error) return;
-  showTab(state.selectedId);
+  const { tabs: storedTabs, activeTab: storedActiveTab } = preferences.project;
+  if (storedTabs) {
+    const valid = new Set(state.snapshot.tree.map((file) => file.fileId));
+    tabIds.value = storedTabs.filter((tab) => tab === 'context' || valid.has(tab));
+    const restored =
+      storedActiveTab != null && tabIds.value.includes(storedActiveTab)
+        ? storedActiveTab
+        : tabIds.value.at(-1);
+    if (restored !== undefined) await activateTab(restored);
+    else if (storedTabs.length) showTab(state.selectedId);
+  } else showTab(state.selectedId);
+  if (restoreController.signal.aborted) return;
+  preferencesReady.value = true;
   workspaceLoaded = true;
   initializeWorkspaceOutput();
   if (historyOpen.value) void refreshHistoryHead();
@@ -1184,9 +1306,12 @@ async function loadWorkspace() {
 onMounted(() => {
   mobileQuery.addEventListener('change', viewportChanged);
   splitQuery.addEventListener('change', splitChanged);
+  window.addEventListener('pagehide', preferences.flush);
   void loadWorkspace();
 });
 onBeforeUnmount(() => {
+  preferences.flush();
+  window.removeEventListener('pagehide', preferences.flush);
   resourceController.abort();
   restoreController.abort();
   compilation.dispose();
@@ -1202,7 +1327,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="page editor-page" :aria-busy="state.loading">
+  <section ref="workspaceElement" class="page editor-page" :aria-busy="state.loading">
     <div v-if="state.loading" class="editor-state" role="status">Завантаження проєкту…</div>
     <div v-else-if="state.error" class="editor-state" role="alert">
       <p>{{ state.error }}</p>
@@ -1533,15 +1658,20 @@ onBeforeUnmount(() => {
       </WorkspaceHistory>
       <div
         v-if="!state.conflict"
+        ref="layoutElement"
         class="editor-layout"
         :class="{
-          'editor-without-files': isMobile || !filesVisible || onlyOutput,
-          'editor-with-output': effectiveViewMode === 'split',
+          'editor-without-files': !showDesktopFiles,
+          'editor-with-output': showSplit,
+        }"
+        :style="{
+          '--editor-file-width': `${filesWidth}px`,
+          '--editor-code-width': `${codeWidth}px`,
         }"
       >
         <aside
           v-if="!isMobile"
-          v-show="filesVisible && !onlyOutput"
+          v-show="showDesktopFiles"
           id="workspace-files"
           class="editor-files"
           aria-label="Файли проєкту"
@@ -1594,7 +1724,23 @@ onBeforeUnmount(() => {
             @inline-retry="retryFileAction"
           />
         </aside>
-        <section v-show="!onlyOutput" class="editor-source" aria-label="Редактор файла">
+        <WorkspaceSeparator
+          v-if="showDesktopFiles"
+          label="Змінити ширину панелі файлів"
+          controls="workspace-files"
+          orientation="vertical"
+          :value="filesWidth"
+          :min="minFilesWidth"
+          :max="maxFilesWidth"
+          :default-value="defaultPanelSizes.filesWidth"
+          @change="panelSizes.filesWidth = $event"
+        />
+        <section
+          v-show="!onlyOutput"
+          id="workspace-source"
+          class="editor-source"
+          aria-label="Редактор файла"
+        >
           <div v-if="activeTab !== null" class="editor-file-bar">
             <WorkspaceTabs
               :tabs="tabs"
@@ -1706,9 +1852,22 @@ onBeforeUnmount(() => {
             />
           </div>
         </section>
+        <WorkspaceSeparator
+          v-if="showSplit"
+          label="Змінити співвідношення коду й PDF"
+          controls="workspace-source"
+          orientation="vertical"
+          :value="codeWidth"
+          :min="minCodeWidth"
+          :max="maxCodeWidth"
+          :default-value="defaultCodeWidth"
+          @change="resizeCode"
+        />
         <WorkspaceOutput
           v-show="showOutput"
           :output="compilation.state"
+          :initial-view="pdfView"
+          @view-change="pdfView = $event"
           @retry="compilation.retry"
           @download="downloadPdf"
           @open="openPdf"
@@ -1718,7 +1877,10 @@ onBeforeUnmount(() => {
         v-if="!state.conflict"
         v-model:open="diagnosticsOpen"
         :result="compilation.state.diagnostics"
+        :height="panelSizes.diagnosticsHeight"
+        :max-height="maxDiagnosticsHeight"
         :can-open-file="canOpenDiagnostic"
+        @resize="panelSizes.diagnosticsHeight = $event"
         @source="openDiagnostic"
       />
       <div class="mobile-files-modal">

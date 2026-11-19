@@ -18,12 +18,16 @@ import {
   type PageSize,
   type PdfAnchor,
   type PdfLayout,
+  type PdfView,
 } from './pdf-layout';
 import { pdfPageSize, releasePdfPageSurface, renderPdfPage } from './pdf-page-surface';
 import { createPdfPageDetails, type PdfDetailPage } from './pdf-page-details';
 
-const props = defineProps<{ pdf: Blob }>();
-const emit = defineEmits<{ displayed: [pdf: Blob] }>();
+const props = defineProps<{ pdf: Blob; initialView?: PdfView | undefined }>();
+const emit = defineEmits<{
+  displayed: [pdf: Blob];
+  viewChange: [view: PdfView];
+}>();
 type DocumentTask = PDFDocumentLoadingTask;
 type LoadedPdf = { task: DocumentTask; doc: PDFDocumentProxy; sizes: PageSize[]; blob: Blob };
 type PreparedPage = { page: PDFPageProxy; surface: HTMLElement };
@@ -48,7 +52,11 @@ const maxScale = ref(MAX_PDF_SCALE);
 const zoomPercent = computed(() => Math.round(scale.value * 100));
 let current: LoadedPdf | undefined;
 let layout: PdfLayout | undefined;
-let anchor: PdfAnchor | null = null;
+let anchor: PdfAnchor | null = props.initialView?.anchor ? { ...props.initialView.anchor } : null;
+zoom.value =
+  props.initialView?.zoom == null
+    ? null
+    : Math.max(MIN_PDF_SCALE, Math.min(MAX_PDF_SCALE, props.initialView.zoom));
 let lastPosition: Point | undefined;
 let pending:
   | { controller: AbortController; task?: DocumentTask; pdf?: LoadedPdf; preparing: boolean }
@@ -93,6 +101,13 @@ function rememberReadingPoint() {
   const element = frame.value;
   if (!element || !viewSize()) return;
   anchor = readAnchor({ x: element.clientWidth / 2, y: 0 });
+}
+
+function publishView() {
+  emit('viewChange', {
+    zoom: zoom.value,
+    anchor: anchor ? { ...anchor } : null,
+  });
 }
 
 function applyLayout(next: PdfLayout, size: PageSize, position: Point) {
@@ -288,6 +303,7 @@ function onScroll() {
   if (position.x !== lastPosition?.x || position.y !== lastPosition.y) {
     rememberReadingPoint();
     lastPosition = position;
+    if (layout && current) publishView();
   }
   updatePageIndicator();
   scheduleFrame();
@@ -299,17 +315,19 @@ function setZoom(value: number | null, point?: Point, remembered?: PdfAnchor) {
   if (!size) return;
   const origin = point ?? { x: size.width / 2, y: 0 };
   const keep = remembered ?? (point ? readAnchor(origin) : (anchor ?? readAnchor(origin)));
+  anchor = keep ? { ...keep } : null;
   zoom.value = value === null ? null : Math.max(MIN_PDF_SCALE, Math.min(MAX_PDF_SCALE, value));
   const next = makeLayout(current, size);
   pageRender?.controller.abort();
   applyLayout(next, size, scrollForAnchor(next, keep, origin, size));
   if (point) rememberReadingPoint();
+  publishView();
   syncPages();
   scheduleFrame();
 }
 
 function stepZoom(factor: number) {
-  setZoom(Math.round(scale.value * factor * 100) / 100);
+  setZoom(scale.value * factor);
 }
 
 function onWheel(event: WheelEvent) {
