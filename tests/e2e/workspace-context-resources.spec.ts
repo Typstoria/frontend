@@ -360,8 +360,23 @@ test('uploads a resource to the selected file parent with the browser filename b
   const dialog = page.getByRole('dialog', { name: 'Завантажити файл', exact: true });
   await expect(dialog.getByRole('alert')).toHaveCount(0);
   const bytes = await attachPng(page, 'diagram.png', 'chapters');
+  await dialog.evaluate((element) => {
+    const messages: string[] = [];
+    const observer = new MutationObserver(() => {
+      const message = element.querySelector('#resource-error')?.textContent?.trim();
+      if (message) messages.push(message);
+    });
+    observer.observe(element, { childList: true, subtree: true, characterData: true });
+    (window as Window & { __resourceValidationMessages?: string[] }).__resourceValidationMessages =
+      messages;
+  });
   await dialog.getByRole('button', { name: 'Додати', exact: true }).click();
   await expect(dialog).toHaveCount(0);
+  const validationMessages = await page.evaluate(
+    () =>
+      (window as Window & { __resourceValidationMessages?: string[] }).__resourceValidationMessages,
+  );
+  expect(validationMessages).not.toContain('Файл із таким шляхом уже існує.');
   await expect.poll(() => api.postCalls()).toBe(1);
   expect(api.uploadCalls()).toBe(1);
   expect(api.bodies[0]!.operations).toEqual([

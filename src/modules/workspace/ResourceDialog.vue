@@ -34,6 +34,7 @@ const selectedFiles = ref<File[]>([]);
 const targetDirectory = ref('');
 const fileName = ref('');
 const fileNameEdited = ref(false);
+const submitted = ref(false);
 const isReplacement = computed(() => props.replacementPath !== undefined);
 const uploadPaths = computed(() =>
   selectedFiles.value.map((selected) =>
@@ -116,6 +117,9 @@ const validationError = computed(() => {
   }
   return '';
 });
+const visibleValidationError = computed(() =>
+  !props.open || submitted.value ? '' : validationError.value,
+);
 
 watch(
   () => [props.open, props.replacementPath, props.directory, props.initialFiles] as const,
@@ -125,11 +129,16 @@ watch(
     targetDirectory.value = props.directory;
     fileName.value = selectedFiles.value.length === 1 ? (selectedFiles.value[0]?.name ?? '') : '';
     fileNameEdited.value = false;
+    submitted.value = false;
   },
   { immediate: true },
 );
+watch(targetDirectory, () => {
+  submitted.value = false;
+});
 
 function selectFile(event: Event) {
+  submitted.value = false;
   const input = event.target as HTMLInputElement;
   selectedFiles.value = [...(input.files ?? [])];
   if (selectedFiles.value.length === 1 && !fileNameEdited.value && !isReplacement.value)
@@ -141,11 +150,13 @@ function selectFile(event: Event) {
 }
 
 function editFileName() {
+  submitted.value = false;
   fileNameEdited.value = true;
 }
 
 function submit() {
-  if (props.busy || props.locked || validationError.value) return;
+  if (!props.open || props.busy || props.locked || validationError.value) return;
+  submitted.value = true;
   emit(
     'submit',
     selectedFiles.value.map((file, index) => ({
@@ -185,9 +196,9 @@ function dismiss() {
             :multiple="!isReplacement"
             autofocus
             :disabled="busy || locked"
-            :aria-invalid="!!selectedFiles.length && !!validationError"
+            :aria-invalid="!!selectedFiles.length && !!visibleValidationError"
             :aria-describedby="
-              selectedFiles.length && validationError ? 'resource-error' : 'resource-hint'
+              selectedFiles.length && visibleValidationError ? 'resource-error' : 'resource-hint'
             "
             @change="selectFile"
           />
@@ -233,20 +244,20 @@ function dismiss() {
             v-model="fileName"
             autocomplete="off"
             :disabled="busy || locked"
-            :aria-invalid="!!validationError"
-            :aria-describedby="validationError ? 'resource-error' : undefined"
+            :aria-invalid="!!visibleValidationError"
+            :aria-describedby="visibleValidationError ? 'resource-error' : undefined"
             @input="editFileName"
           />
         </div>
       </template>
 
       <p
-        v-if="validationError && (selectedFiles.length || fileName)"
+        v-if="visibleValidationError && (selectedFiles.length || fileName)"
         id="resource-error"
         class="field-error"
         role="alert"
       >
-        {{ validationError }}
+        {{ visibleValidationError }}
       </p>
       <p v-if="error" class="form-message form-error" role="alert">{{ error }}</p>
       <div class="modal-actions">
