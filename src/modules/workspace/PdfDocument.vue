@@ -14,6 +14,7 @@ import {
   pageAt,
   pdfAnchor,
   pdfLayout,
+  samePdfView,
   scrollForAnchor,
   type PageSize,
   type PdfAnchor,
@@ -23,7 +24,7 @@ import {
 import { pdfPageSize, releasePdfPageSurface, renderPdfPage } from './pdf-page-surface';
 import { createPdfPageDetails, type PdfDetailPage } from './pdf-page-details';
 
-const props = defineProps<{ pdf: Blob; initialView?: PdfView | undefined }>();
+const props = defineProps<{ pdf: Blob; view?: PdfView | undefined }>();
 const emit = defineEmits<{
   displayed: [pdf: Blob];
   viewChange: [view: PdfView];
@@ -52,11 +53,11 @@ const maxScale = ref(MAX_PDF_SCALE);
 const zoomPercent = computed(() => Math.round(scale.value * 100));
 let current: LoadedPdf | undefined;
 let layout: PdfLayout | undefined;
-let anchor: PdfAnchor | null = props.initialView?.anchor ? { ...props.initialView.anchor } : null;
+let anchor: PdfAnchor | null = props.view?.anchor ?? null;
 zoom.value =
-  props.initialView?.zoom == null
+  props.view?.zoom == null
     ? null
-    : Math.max(MIN_PDF_SCALE, Math.min(MAX_PDF_SCALE, props.initialView.zoom));
+    : Math.max(MIN_PDF_SCALE, Math.min(MAX_PDF_SCALE, props.view.zoom));
 let lastPosition: Point | undefined;
 let pending:
   | { controller: AbortController; task?: DocumentTask; pdf?: LoadedPdf; preparing: boolean }
@@ -513,6 +514,32 @@ onMounted(() => {
 watch(
   () => props.pdf,
   (pdf) => void openPdf(pdf),
+);
+
+watch(
+  () => props.view,
+  (view) => {
+    if (!view || samePdfView(view, zoom.value, anchor)) return;
+    zoom.value = view.zoom;
+    anchor = view.anchor;
+    const size = viewSize();
+    if (size && layout) {
+      if (
+        zoom.value !== renderedZoom ||
+        size.width !== viewportWidth ||
+        size.height !== viewportHeight
+      )
+        refreshLayout(size);
+      else
+        applyLayout(
+          layout,
+          size,
+          scrollForAnchor(layout, anchor, { x: size.width / 2, y: 0 }, size),
+        );
+    }
+    scheduleFrame();
+  },
+  { flush: 'sync' },
 );
 
 onBeforeUnmount(() => {

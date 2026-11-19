@@ -12,6 +12,7 @@ import {
   pageAt,
   pdfAnchor,
   pdfLayout,
+  samePdfView,
   scrollForAnchor,
   type PageSize,
   type PdfAnchor,
@@ -19,7 +20,7 @@ import {
   type PdfView,
 } from './pdf-layout';
 
-const props = defineProps<{ document: Uint8Array; initialView?: PdfView | undefined }>();
+const props = defineProps<{ document: Uint8Array; view?: PdfView | undefined }>();
 const emit = defineEmits<{
   displayed: [document: Uint8Array];
   failed: [document: Uint8Array];
@@ -38,7 +39,7 @@ const loading = ref(true);
 const error = ref(false);
 const pageCount = ref(0);
 const pageNumber = ref(1);
-const zoom = ref<number | null>(props.initialView?.zoom ?? null);
+const zoom = ref<number | null>(props.view?.zoom ?? null);
 const scale = ref(1);
 const maxScale = ref(MAX_PDF_SCALE);
 const zoomPercent = computed(() => Math.round(scale.value * 100));
@@ -48,7 +49,8 @@ let rendererPromise: Promise<TypstRenderer> | undefined;
 let current: LoadedVector | undefined;
 let pendingViewport: PendingVector | undefined;
 let layout: PdfLayout | undefined;
-let anchor: PdfAnchor | null = props.initialView?.anchor ? { ...props.initialView.anchor } : null;
+let anchor: PdfAnchor | null = props.view?.anchor ?? null;
+let lastPosition: Point | undefined;
 let resizeObserver: ResizeObserver | undefined;
 let frameRequest = 0;
 let documentGeneration = 0;
@@ -104,6 +106,7 @@ function applyLayout(next: PdfLayout, size: PageSize, position: Point) {
   surface.style.height = `${next.height}px`;
   element.scrollLeft = position.x;
   element.scrollTop = position.y;
+  lastPosition = { x: element.scrollLeft, y: element.scrollTop };
   updatePageIndicator();
 }
 
@@ -204,16 +207,16 @@ async function renderPages(
       const prepared: PreparedPage[] = [];
       try {
         for (const index of indexes) {
-          const page = docLayout.pages[index]!;
-          const canvas = createCanvas(doc.sizes[index]!, docLayout.scale, pixelBudget);
-          const ctx = canvas.getContext('2d', { alpha: false });
+          const page = doc.sizes[index]!;
+          const canvas = createCanvas(page, docLayout.scale, pixelBudget);
+          const ctx = canvas.getContext('2d');
           if (!ctx) throw new Error('Canvas is unavailable');
           try {
             await activeRenderer.renderCanvas({
               renderSession: session,
               canvas: ctx,
               pageOffset: index,
-              pixelPerPt: docLayout.scale * (canvas.width / (page.width * docLayout.scale)),
+              pixelPerPt: canvas.width / page.width,
               backgroundColor: '#ffffff',
               dataSelection: { body: true },
             });
@@ -250,6 +253,7 @@ function getRenderer(): Promise<TypstRenderer> {
 
 async function installDocument(request: PendingVector, size: PageSize) {
   const { document: doc, generation } = request;
+  const view = { zoom: zoom.value, anchor };
   const next = makeLayout(doc, size);
   const position = scrollForAnchor(next, anchor, { x: size.width / 2, y: 0 }, size);
   const range = pageRange(next, position, size);
@@ -260,6 +264,18 @@ async function installDocument(request: PendingVector, size: PageSize) {
   const prepared = await renderPages(doc, next, indexes);
   if (disposed || generation !== documentGeneration) {
     prepared.forEach(({ canvas }) => clearCanvas(canvas));
+    return;
+  }
+  const latestSize = viewSize();
+  if (
+    !latestSize ||
+    latestSize.width !== size.width ||
+    latestSize.height !== size.height ||
+    !samePdfView(view, zoom.value, anchor)
+  ) {
+    prepared.forEach(({ canvas }) => clearCanvas(canvas));
+    pendingViewport = request;
+    scheduleFrame();
     return;
   }
   clearSlots();
@@ -363,10 +379,14 @@ async function syncPages() {
 
 function onScroll() {
   const element = frame.value;
-  if (!element || !layout) return;
-  anchor = readAnchor({ x: element.clientWidth / 2, y: 0 });
+  if (!element || !layout || !viewSize()) return;
+  const position = { x: element.scrollLeft, y: element.scrollTop };
+  if (position.x !== lastPosition?.x || position.y !== lastPosition.y) {
+    anchor = readAnchor({ x: element.clientWidth / 2, y: 0 });
+    lastPosition = position;
+    publishView();
+  }
   updatePageIndicator();
-  if (current) publishView();
   scheduleFrame();
 }
 
@@ -380,7 +400,7 @@ function setZoom(value: number | null, point?: Point, remembered?: PdfAnchor) {
   zoom.value = value === null ? null : Math.max(MIN_PDF_SCALE, Math.min(MAX_PDF_SCALE, value));
   const next = makeLayout(current, size);
   applyLayout(next, size, scrollForAnchor(next, keep, origin, size));
-  if (point) anchor = readAnchor(origin);
+  if (point) anchor = readAnchor({ x: size.width / 2, y: 0 });
   publishView();
   scheduleFrame();
 }
@@ -480,6 +500,27 @@ onMounted(() => {
 watch(
   () => props.document,
   (bytes) => void openDocument(bytes),
+);
+
+watch(
+  () => props.view,
+  (view) => {
+    if (!view || samePdfView(view, zoom.value, anchor)) return;
+    zoom.value = view.zoom;
+    anchor = view.anchor;
+    const size = viewSize();
+    if (size && current && layout) {
+      const next =
+        zoom.value !== renderedZoom ||
+        size.width !== viewportWidth ||
+        size.height !== viewportHeight
+          ? makeLayout(current, size)
+          : layout;
+      applyLayout(next, size, scrollForAnchor(next, anchor, { x: size.width / 2, y: 0 }, size));
+    }
+    scheduleFrame();
+  },
+  { flush: 'sync' },
 );
 
 onBeforeUnmount(() => {

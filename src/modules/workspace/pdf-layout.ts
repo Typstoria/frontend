@@ -7,6 +7,20 @@ export type PdfAnchor = {
   gap: number;
 };
 export type PdfView = { zoom: number | null; anchor: PdfAnchor | null };
+
+export function samePdfView(view: PdfView, zoom: number | null, anchor: PdfAnchor | null) {
+  if (view.zoom !== zoom) return false;
+  const next = view.anchor;
+  return (
+    next === anchor ||
+    (!!next &&
+      !!anchor &&
+      next.page === anchor.page &&
+      next.x === anchor.x &&
+      next.y === anchor.y &&
+      next.gap === anchor.gap)
+  );
+}
 export type PdfLayout = {
   scale: number;
   maxScale: number;

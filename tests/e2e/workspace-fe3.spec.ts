@@ -344,6 +344,65 @@ test('previews unsaved Typst edits while keeping the accepted PDF available', as
   }
 });
 
+test('keeps draft zoom and reading position when the accepted PDF arrives', async ({ page }) => {
+  await installWorkspace(page);
+  let releasePdf!: () => void;
+  const pdfReady = new Promise<void>((resolve) => (releasePdf = resolve));
+  await page.route('**/api/projects/1/compilations', (route) =>
+    route.fulfill({ status: 202, json: job(101, 'succeeded') }),
+  );
+  await page.route('**/api/projects/1/compilations/50/pdf', async (route) => {
+    await pdfReady;
+    await route.fulfill({
+      contentType: 'application/pdf',
+      body: pdfFixture(700, 3, 'Accepted PDF'),
+    });
+  });
+
+  try {
+    await page.goto('/projects/1');
+    const editor = page.getByRole('textbox', { name: 'Вихідний текст' });
+    const preview = page.getByRole('button', { name: 'Лише PDF', exact: true });
+    const compact = !(await page.getByRole('button', { name: 'Код і PDF', exact: true }).count());
+    if (compact) await preview.click();
+    await expect(page.locator('.pdf-page').first()).toContainText('Startup PDF');
+    if (compact) await page.getByRole('button', { name: 'Лише код', exact: true }).click();
+    await editor.fill(
+      '#set page(width: 200pt, height: 700pt)\nFirst\n#pagebreak()\nSecond\n#pagebreak()\nThird',
+    );
+    if (compact) await preview.click();
+
+    const draft = page.locator('.workspace-output-draft');
+    await expect(draft.getByRole('button', { name: 'Зменшити масштаб' })).toBeVisible();
+    const zoom = draft.locator('.preview-zoom-value');
+    const initialZoom = await zoom.textContent();
+    await draft.getByRole('button', { name: 'Зменшити масштаб' }).click();
+    await expect(zoom).not.toHaveText(initialZoom!);
+    const expectedZoom = await zoom.textContent();
+    await expect
+      .poll(() =>
+        draft
+          .locator('canvas')
+          .first()
+          .evaluate((canvas: HTMLCanvasElement) => {
+            const edge = canvas.getContext('2d')?.getImageData(canvas.width - 3, 5, 1, 1).data;
+            return edge && [...edge];
+          }),
+      )
+      .toEqual([255, 255, 255, 255]);
+    const second = draft.locator('.vector-page[data-page-number="2"]');
+    await second.evaluate((element) => element.scrollIntoView({ block: 'start' }));
+    await expect(draft.locator('.preview-page-indicator')).toHaveText('2 / 3');
+
+    releasePdf();
+    await expect(page.getByRole('heading', { name: 'PDF', exact: true })).toBeVisible();
+    await expect(page.locator('.pdf-zoom-value')).toHaveText(expectedZoom!);
+    await expect(page.locator('.pdf-page-indicator')).toHaveText('2 / 3');
+  } finally {
+    releasePdf();
+  }
+});
+
 test('renders only nearby pages when scrolling through a long PDF', async ({ page }) => {
   await installWorkspace(page);
   await page.route('**/api/projects/1/compilations', (route) =>

@@ -157,7 +157,7 @@ onBeforeUnmount(() => {
       >
         <PdfDocument
           :pdf="output.artifact.pdf"
-          :initial-view="initialView"
+          :view="initialView"
           @displayed="setDisplayedPdf"
           @view-change="!showDraft && emit('viewChange', $event)"
         />
@@ -179,7 +179,7 @@ onBeforeUnmount(() => {
       >
         <LivePreviewDocument
           :document="draft"
-          :initial-view="initialView"
+          :view="initialView"
           @displayed="setDisplayedDraft"
           @failed="emit('draftClosed', $event)"
           @view-change="showDraft && emit('viewChange', $event)"
