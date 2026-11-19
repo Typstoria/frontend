@@ -430,6 +430,96 @@ test('renames and moves a file while preserving its file ID and content', async 
   expect(api.server.files.find((file) => file.fileId === 11)?.content).toBe('Нотатки\n');
 });
 
+test('drags a folder and saves its Typst reference changes in the same revision', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name === 'mobile', 'Desktop drag and drop');
+  await installSession(page);
+  const api = await installApi(page);
+  api.server.directories.push('chapters', 'chapters/nested', 'archive');
+  api.server.directoryVersions.set(api.server.revisionId, [...api.server.directories]);
+  api.server.files[0]!.content = '= 💡 Початок\n#include "chapters/notes.typ"\n';
+  api.server.files[1]!.path = 'chapters/notes.typ';
+  api.server.files[1]!.content = '#import "../main.typ": title\n';
+  await openWorkspace(page);
+  const folder = page.getByRole('button', { name: 'chapters', exact: true });
+  await folder.dragTo(page.getByRole('button', { name: 'chapters/nested', exact: true }));
+  await expect(page.getByRole('dialog', { name: 'Перемістити папку' })).toHaveCount(0);
+
+  await folder.dragTo(page.getByRole('button', { name: 'archive', exact: true }));
+  const move = page.getByRole('dialog', { name: 'Перемістити папку' });
+  await expect(move.getByLabel('Перемістити до')).toHaveValue('archive');
+  await move.getByRole('button', { name: 'Перемістити', exact: true }).click();
+  await expect(move).toHaveCount(0);
+  await expect(editor(page)).toContainText('#include "archive/chapters/notes.typ"');
+  expect(api.bodies).toEqual([
+    {
+      baseRevisionId: 100,
+      operations: [
+        {
+          type: 'updateText',
+          fileId: 10,
+          content: '= 💡 Початок\n#include "archive/chapters/notes.typ"\n',
+        },
+        { type: 'updateText', fileId: 11, content: '#import "../../main.typ": title\n' },
+        { type: 'renameDirectory', path: 'chapters', newPath: 'archive/chapters' },
+      ],
+    },
+  ]);
+  expect(api.server.files.find((file) => file.fileId === 11)?.path).toBe(
+    'archive/chapters/notes.typ',
+  );
+});
+
+test('adds several UTF-8 files to a folder through drop or the mobile picker', async ({ page }) => {
+  await installSession(page);
+  const api = await installApi(page);
+  api.server.directories.push('chapters');
+  api.server.directoryVersions.set(api.server.revisionId, ['chapters']);
+  await openWorkspace(page);
+  const upload = page.getByRole('dialog', { name: 'Завантажити файл' });
+  const files = [
+    { name: 'chapter.typ', content: '= Розділ' },
+    { name: 'notes.txt', content: '' },
+  ];
+
+  if (await mobileLayout(page)) {
+    await fileMenu(page, 'chapters', 'Завантажити файл', false, true);
+    await upload.locator('input[type=file]').setInputFiles(
+      files.map(({ name, content }) => ({
+        name,
+        mimeType: 'text/plain',
+        buffer: Buffer.from(content),
+      })),
+    );
+  } else {
+    const target = page.getByRole('button', { name: 'chapters', exact: true });
+    const dataTransfer = await page.evaluateHandle((sources) => {
+      const data = new DataTransfer();
+      for (const { content, name } of sources) data.items.add(new File([content], name));
+      return data;
+    }, files);
+    await target.dispatchEvent('dragover', { dataTransfer });
+    await expect(target.locator('..')).toHaveClass(/workspace-file-row-drop-target/);
+    await target.dispatchEvent('drop', { dataTransfer });
+    await dataTransfer.dispose();
+  }
+
+  await expect(upload.getByLabel('Папка', { exact: true })).toHaveValue('chapters');
+  await upload.getByRole('button', { name: 'Додати', exact: true }).click();
+  await expect(upload).toHaveCount(0);
+  expect(api.bodies).toEqual([
+    {
+      baseRevisionId: 100,
+      operations: files.map(({ name, content }) => ({
+        type: 'createFile',
+        path: `chapters/${name}`,
+        content,
+      })),
+    },
+  ]);
+});
+
 test('creates, renames, moves and removes an empty folder through the file tree', async ({
   page,
 }) => {
@@ -512,6 +602,9 @@ test('opens workspace menus with the keyboard and confirms project deletion expl
   const mobile = await mobileLayout(page);
   const group = (name: string) =>
     page.getByRole('button', { name: mobile ? 'Меню' : name, exact: true });
+  const menuBounds = (await group('Файл').boundingBox())!;
+  const compileBounds = (await page.getByRole('button', { name: 'Скомпілювати' }).boundingBox())!;
+  expect(menuBounds.x + menuBounds.width).toBeLessThan(compileBounds.x);
   const openGroup = async (name: string) => {
     await group(name).focus();
     await page.keyboard.press('ArrowDown');

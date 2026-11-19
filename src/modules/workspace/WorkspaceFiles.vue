@@ -3,7 +3,13 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import type { ComponentPublicInstance } from 'vue';
 import type { Snapshot } from './workspace-api';
 import WorkspaceInlineName from './WorkspaceInlineName.vue';
-import { parentFolder } from './file-path';
+import {
+  filePathError,
+  filePathInFolder,
+  inFolder,
+  normalizeFilePath,
+  parentFolder,
+} from './file-path';
 
 const props = defineProps<{
   files: Snapshot['tree'];
@@ -16,6 +22,7 @@ const props = defineProps<{
   disabled: boolean;
   replaceDisabled: boolean;
   mobile: boolean;
+  dropDisabled?: boolean;
   inlineEdit?: {
     kind: 'create' | 'createDirectory' | 'rename' | 'renameDirectory';
     directory: string;
@@ -35,6 +42,9 @@ const emit = defineEmits<{
   inlineSubmit: [];
   inlineCancel: [];
   inlineRetry: [];
+  moveDrop: [target: number | string, directory: string, trigger: HTMLElement];
+  uploadDrop: [files: File[], directory: string, trigger: HTMLElement];
+  folderDropRejected: [];
   action: [
     kind:
       | 'create'
@@ -111,6 +121,13 @@ const rows = computed(() => {
 });
 
 const openMenu = ref<OpenMenu | null>(null);
+const treeElement = ref<HTMLElement | null>(null);
+const highlightedDrop = ref<string | null>(null);
+const activeLocalDrag = ref<LocalDrag | null>(null);
+const localDragType = 'application/x-typstoria-tree-entry';
+const canDragEntries = computed(
+  () => !props.disabled && !props.dropDisabled && !props.mobile && !props.inlineEdit,
+);
 const menuElement = ref<HTMLElement | null>(null);
 const menuPosition = ref({ left: 0, top: 0 });
 const menuActions = computed(() => {
@@ -294,6 +311,132 @@ function isInlineCreationAfter(node: FileTreeNode) {
   );
 }
 
+type LocalDrag = { kind: 'file'; target: number } | { kind: 'directory'; target: string };
+
+function isExternalFileDrag(dataTransfer: DataTransfer) {
+  return Array.from(dataTransfer.types).includes('Files');
+}
+
+function dropDirectory(event: DragEvent) {
+  const target = event.target;
+  const row =
+    target instanceof Element ? target.closest<HTMLElement>('[data-drop-directory]') : null;
+  return row?.dataset.dropDirectory ?? '';
+}
+
+function isValidMove(drag: LocalDrag, directory: string) {
+  if (drag.kind === 'file') {
+    const file = props.files.find(({ fileId }) => fileId === drag.target);
+    if (!file || parentFolder(file.path) === directory) return false;
+    const nextPath = filePathInFolder(directory, file.path.split('/').at(-1)!);
+    return (
+      !filePathError(nextPath, props.files, file.fileId) &&
+      !props.directories.some((path) => path === nextPath || path.startsWith(`${nextPath}/`))
+    );
+  }
+
+  const source = normalizeFilePath(drag.target);
+  if (directory === parentFolder(source) || directory === source || inFolder(directory, source))
+    return false;
+  if (directory && !props.directories.includes(directory)) return false;
+  const nextFolder = filePathInFolder(directory, source.split('/').at(-1)!);
+  if (
+    props.directories.some((path) => path === nextFolder || path.startsWith(`${nextFolder}/`)) ||
+    props.files.some(
+      ({ path }) =>
+        path === nextFolder ||
+        path.startsWith(`${nextFolder}/`) ||
+        nextFolder.startsWith(`${path}/`),
+    )
+  )
+    return false;
+  return true;
+}
+
+function onTreeDragStart(event: DragEvent, drag: LocalDrag) {
+  if (!canDragEntries.value || !event.dataTransfer) {
+    event.preventDefault();
+    return;
+  }
+  activeLocalDrag.value = drag;
+  event.dataTransfer.setData(localDragType, '');
+  event.dataTransfer.effectAllowed = 'move';
+}
+
+function onTreeDragEnd() {
+  highlightedDrop.value = null;
+  activeLocalDrag.value = null;
+}
+
+function onTreeDragOver(event: DragEvent) {
+  const dataTransfer = event.dataTransfer;
+  if (!dataTransfer) return;
+  const hasLocalType = Array.from(dataTransfer.types).includes(localDragType);
+  const localDrag = hasLocalType ? activeLocalDrag.value : null;
+  const externalFiles = isExternalFileDrag(dataTransfer);
+  if (!hasLocalType && !externalFiles) return;
+  // Prevent the browser from navigating to a dropped file, including rejected drops.
+  event.preventDefault();
+  if (hasLocalType) event.stopPropagation();
+  if (!canDragEntries.value) {
+    highlightedDrop.value = null;
+    return;
+  }
+  const directory = dropDirectory(event);
+  const valid = localDrag ? isValidMove(localDrag, directory) : !hasLocalType;
+  highlightedDrop.value = valid ? directory : null;
+  dataTransfer.dropEffect = valid ? (hasLocalType ? 'move' : 'copy') : 'none';
+}
+
+function onTreeDragLeave(event: DragEvent) {
+  const related = event.relatedTarget;
+  if (related instanceof Node && treeElement.value?.contains(related)) return;
+  highlightedDrop.value = null;
+}
+
+function containsExternalDirectory(dataTransfer: DataTransfer) {
+  return Array.from(dataTransfer.items).some((item) => {
+    if (item.kind !== 'file') return false;
+    const entry = (
+      item as DataTransferItem & { webkitGetAsEntry?: () => FileSystemEntry | null }
+    ).webkitGetAsEntry?.();
+    return entry?.isDirectory === true;
+  });
+}
+
+function onTreeDrop(event: DragEvent) {
+  const dataTransfer = event.dataTransfer;
+  if (!dataTransfer) return;
+  const hasLocalType = Array.from(dataTransfer.types).includes(localDragType);
+  const localDrag = hasLocalType ? activeLocalDrag.value : null;
+  const externalFiles = isExternalFileDrag(dataTransfer);
+  if (!hasLocalType && !externalFiles) return;
+  event.preventDefault();
+  if (hasLocalType) event.stopPropagation();
+  highlightedDrop.value = null;
+  if (!canDragEntries.value) return;
+
+  const directory = dropDirectory(event);
+  const trigger =
+    event.target instanceof Element
+      ? (event.target
+          .closest<HTMLElement>('[data-drop-directory]')
+          ?.querySelector<HTMLElement>('.workspace-file-tree-button') ?? treeElement.value)
+      : treeElement.value;
+  if (!trigger) return;
+  if (localDrag) {
+    if (isValidMove(localDrag, directory)) emit('moveDrop', localDrag.target, directory, trigger);
+    return;
+  }
+  if (!externalFiles) return;
+  if (containsExternalDirectory(dataTransfer)) {
+    emit('folderDropRejected');
+    return;
+  }
+  const files = Array.from(dataTransfer.files);
+  if (files.length) emit('uploadDrop', files, directory, trigger);
+}
+
 watch(rows, (visibleRows) => {
   if (
     openMenu.value &&
@@ -311,7 +454,15 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onOutsidePoint
 </script>
 
 <template>
-  <ul class="workspace-file-list">
+  <ul
+    ref="treeElement"
+    class="workspace-file-list"
+    tabindex="-1"
+    :class="{ 'workspace-file-list-drop-root': highlightedDrop === '' }"
+    @dragover="onTreeDragOver"
+    @dragleave="onTreeDragLeave"
+    @drop="onTreeDrop"
+  >
     <li
       v-if="
         inlineEdit &&
@@ -337,7 +488,11 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onOutsidePoint
       v-for="node in rows"
       :key="node.file ? `file-${node.file.fileId}` : `folder-${node.path}`"
     >
-      <li class="workspace-file-row">
+      <li
+        class="workspace-file-row"
+        :data-drop-directory="node.file ? parentFolder(node.path) : node.path"
+        :class="{ 'workspace-file-row-drop-target': !node.file && highlightedDrop === node.path }"
+      >
         <WorkspaceInlineName
           v-if="hasInlineTarget(node) && inlineEdit"
           :kind="inlineEdit.kind"
@@ -358,6 +513,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onOutsidePoint
           <button
             type="button"
             class="workspace-file-tree-button"
+            :draggable="canDragEntries"
             :data-tree-target="String(node.file.fileId)"
             :style="{
               paddingLeft: `calc(${indentation(node.depth)}px + var(--file-disclosure-width) + 4px)`,
@@ -369,6 +525,8 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onOutsidePoint
             @click="emit('select', node.file.fileId)"
             @contextmenu="onContextMenu(node, $event)"
             @keydown="onRowKeydown(node, $event)"
+            @dragstart="onTreeDragStart($event, { kind: 'file', target: node.file.fileId })"
+            @dragend="onTreeDragEnd"
           >
             <svg
               class="file-symbol"
@@ -471,6 +629,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onOutsidePoint
           <button
             type="button"
             class="workspace-file-tree-button workspace-folder-name-button"
+            :draggable="canDragEntries"
             :data-tree-target="node.path"
             :aria-label="node.path"
             :title="node.path"
@@ -478,6 +637,8 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onOutsidePoint
             @click="emit('selectFolder', node.path)"
             @contextmenu="onContextMenu(node, $event)"
             @keydown="onRowKeydown(node, $event)"
+            @dragstart="onTreeDragStart($event, { kind: 'directory', target: node.path })"
+            @dragend="onTreeDragEnd"
           >
             <svg
               class="file-folder"
@@ -558,6 +719,12 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onOutsidePoint
 <style scoped>
 .workspace-file-list {
   --file-disclosure-width: 28px;
+  min-height: calc(100% - 40px);
+  box-sizing: border-box;
+}
+
+.workspace-file-list-drop-root {
+  background: #edf2f6;
 }
 
 .workspace-file-row {
@@ -565,6 +732,10 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onOutsidePoint
   align-items: stretch;
   min-width: 0;
   position: relative;
+}
+
+.workspace-file-row-drop-target {
+  background: #edf2f6;
 }
 
 .workspace-file-tree-button {
@@ -683,6 +854,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onOutsidePoint
 @media (max-width: 720px) {
   .workspace-file-list {
     --file-disclosure-width: 44px;
+    min-height: 0;
   }
   .workspace-file-action-menu button {
     min-height: 44px;

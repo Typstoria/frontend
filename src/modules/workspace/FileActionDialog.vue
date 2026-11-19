@@ -19,6 +19,7 @@ const props = defineProps<{
   open: boolean;
   action: WorkspaceFileAction | null;
   initialName?: string;
+  initialDirectory?: string | undefined;
   files: Snapshot['tree'];
   directories: string[];
   mainFileId: number;
@@ -230,6 +231,7 @@ watch(
       props.open,
       props.action?.kind,
       props.initialName,
+      props.initialDirectory,
       props.action && 'fileId' in props.action
         ? props.action.fileId
         : props.action && 'directoryPath' in props.action
@@ -253,7 +255,7 @@ watch(
     }
     if (props.action?.kind === 'rename' || props.action?.kind === 'renameDirectory')
       directory.value = currentLocation.value;
-    if (moving.value) directory.value = currentLocation.value;
+    if (moving.value) directory.value = props.initialDirectory ?? currentLocation.value;
     replacementId.value = candidates.value[0]?.fileId;
   },
   { immediate: true },

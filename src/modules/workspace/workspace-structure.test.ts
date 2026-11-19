@@ -112,6 +112,41 @@ it('keeps a lost create immutable and preserves newer edits when its replay succ
   expect(state.status).toBe('dirty');
 });
 
+it('rebases edits made during a file move onto the rewritten references', async () => {
+  const { api, model, state } = fixture();
+  vi.mocked(api.text).mockResolvedValueOnce({
+    ...file(1, 'main.typ'),
+    revisionId: 10,
+    content: '#include "notes.typ"',
+  });
+  vi.mocked(api.state).mockImplementation(async (_id, _signal, revisionId) =>
+    revisionId ? snapshot(11, [file(1, 'main.typ'), file(2, 'docs/notes.typ')]) : snapshot(),
+  );
+  let confirmMove!: (response: SaveResult) => void;
+  vi.mocked(api.save).mockReturnValueOnce(
+    new Promise((resolve) => {
+      confirmMove = resolve;
+    }),
+  );
+  await model.load();
+
+  const move = model.mutate([{ type: 'renameFile', fileId: 2, path: 'docs/notes.typ' }]);
+  await vi.waitFor(() => expect(api.save).toHaveBeenCalledOnce());
+  model.edit(1, '#include "notes.typ"\nNew user text');
+  confirmMove(result());
+  await move;
+
+  expect(vi.mocked(api.save).mock.calls[0]![1].operations).toEqual([
+    { type: 'updateText', fileId: 1, content: '#include "docs/notes.typ"' },
+    { type: 'renameFile', fileId: 2, path: 'docs/notes.typ' },
+  ]);
+  expect(state.files[1]).toEqual({
+    base: '#include "docs/notes.typ"',
+    content: '#include "docs/notes.typ"\nNew user text',
+  });
+  expect(state.status).toBe('dirty');
+});
+
 it('retries only the read after a committed structural save and keeps that phase across reauthentication', async () => {
   const { api, model, state } = fixture();
   await model.load();

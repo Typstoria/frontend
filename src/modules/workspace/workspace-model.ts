@@ -5,7 +5,13 @@ import { inFolder } from './file-path';
 import { structureError } from './file-structure';
 
 type Draft = { base: string; content: string };
-type Attempt = { body: Changes; key: string; result?: SaveResult; selectPath?: string };
+type Attempt = {
+  body: Changes;
+  key: string;
+  result?: SaveResult;
+  selectPath?: string;
+  rewriteInputs?: Record<number, string>;
+};
 type SaveStatus =
   'clean' | 'dirty' | 'saving' | 'failed' | 'outcome_unknown' | 'refresh_failed' | 'conflict';
 type StructureChoice = {
@@ -97,6 +103,10 @@ export function workspaceError(error: unknown, fallback: string): string {
       return 'Не вдалося застосувати зміни файлів. Перевірте шляхи та головний файл.';
   }
   return fallback;
+}
+
+function typstSources(snapshot: Snapshot) {
+  return snapshot.tree.filter((file) => file.contentKind === 'text' && /\.typ$/iu.test(file.path));
 }
 
 export function createWorkspaceModel(projectId: number, api: WorkspaceApi, delay = 1000) {
@@ -265,6 +275,78 @@ export function createWorkspaceModel(projectId: number, api: WorkspaceApi, delay
     void attempt.then(clear, clear);
     return attempt;
   }
+  async function prepareReferenceRewrites(snapshot: Snapshot, structure: StructureChange[]) {
+    const moves = structure.filter(
+      (operation) => operation.type === 'renameFile' || operation.type === 'renameDirectory',
+    );
+    const { createReferenceParser, movedProjectPaths, rewriteTypstReferences } =
+      await import('./typst-references');
+    const paths = movedProjectPaths(snapshot.tree, moves);
+    const rewrites = new Map<number, { before: string; after: string }>();
+    if (!snapshot.tree.some(({ path }) => paths.get(path) !== path)) return rewrites;
+    const sources = typstSources(snapshot);
+    const unloaded = sources.filter((file) => !state.files[file.fileId]);
+    const contents = new Map<number, string>();
+    const parser = await createReferenceParser();
+    try {
+      for (let i = 0; i < unloaded.length; i += 6) {
+        await Promise.all(
+          unloaded.slice(i, i + 6).map(async ({ fileId }) => {
+            const text = await api.text(projectId, fileId, snapshot.revision.id, controller.signal);
+            contents.set(fileId, text.content);
+          }),
+        );
+      }
+      for (const { fileId, path } of sources) {
+        const before = state.files[fileId]?.content ?? contents.get(fileId);
+        if (before === undefined) continue;
+        const after = rewriteTypstReferences(parser, before, path, paths);
+        if (after !== before) rewrites.set(fileId, { before, after });
+      }
+      return rewrites;
+    } finally {
+      parser.delete();
+    }
+  }
+  async function reconcileReferences(attempt: Attempt, snapshot: Snapshot) {
+    const moves = attempt.body.operations.filter(
+      (operation) => operation.type === 'renameFile' || operation.type === 'renameDirectory',
+    );
+    if (!moves.length) return;
+    const sent = new Map(
+      attempt.body.operations
+        .filter((operation) => operation.type === 'updateText')
+        .map(({ fileId, content }) => [fileId, content]),
+    );
+    const sources = typstSources(snapshot);
+    function original(fileId: number, file: Draft) {
+      return attempt.rewriteInputs?.[fileId] ?? sent.get(fileId) ?? file.base;
+    }
+    if (
+      !sources.some(({ fileId }) => {
+        const file = state.files[fileId];
+        return file && file.content !== original(fileId, file);
+      })
+    )
+      return;
+
+    const { createReferenceParser, movedProjectPaths, rewriteTypstReferences } =
+      await import('./typst-references');
+    const parser = await createReferenceParser();
+    try {
+      if (!active) return;
+      const paths = movedProjectPaths(snapshot.tree, moves);
+      const rebased = new Map<number, string>();
+      for (const { fileId, path } of sources) {
+        const file = state.files[fileId];
+        if (!file || file.content === original(fileId, file)) continue;
+        rebased.set(fileId, rewriteTypstReferences(parser, file.content, path, paths));
+      }
+      return rebased;
+    } finally {
+      parser.delete();
+    }
+  }
   async function performSave() {
     clearTimer();
     if (!active || composing || !state.snapshot || ['saving', 'conflict'].includes(state.status))
@@ -276,6 +358,24 @@ export function createWorkspaceModel(projectId: number, api: WorkspaceApi, delay
         state.saveError = error;
         return;
       }
+      const snapshot = state.snapshot;
+      let rewrites: Awaited<ReturnType<typeof prepareReferenceRewrites>> | undefined;
+      if (state.structure.some((op) => op.type === 'renameFile' || op.type === 'renameDirectory')) {
+        state.status = 'saving';
+        state.saveError = '';
+        try {
+          rewrites = await prepareReferenceRewrites(snapshot, state.structure);
+          if (!active) return;
+        } catch (error) {
+          if (!active) return;
+          state.status = 'failed';
+          state.saveError = workspaceError(
+            error,
+            'Не вдалося перевірити посилання Typst. Повторіть переміщення або перейменування.',
+          );
+          return;
+        }
+      }
       const deleted = new Set(
         state.structure.filter((op) => op.type === 'deleteFile').map((op) => op.fileId),
       );
@@ -285,13 +385,22 @@ export function createWorkspaceModel(projectId: number, api: WorkspaceApi, delay
           if (file.path.startsWith(`${operation.path}/`)) deleted.add(file.fileId);
       }
       const operations: Changes['operations'] = Object.entries(state.files)
-        .filter(([id, f]) => f.base !== f.content && !deleted.has(Number(id)))
+        .filter(
+          ([id, f]) =>
+            f.base !== f.content && !deleted.has(Number(id)) && !rewrites?.has(Number(id)),
+        )
         .map(([fileId, f]) => ({
           type: 'updateText' as const,
           fileId: Number(fileId),
           content: f.content,
         }));
-      if (state.contextText !== state.snapshot.contextText)
+      const rewriteInputs: Record<number, string> = {};
+      for (const [fileId, rewrite] of rewrites ?? []) {
+        if (deleted.has(fileId)) continue;
+        operations.push({ type: 'updateText', fileId, content: rewrite.after });
+        rewriteInputs[fileId] = rewrite.before;
+      }
+      if (state.contextText !== snapshot.contextText)
         operations.push({ type: 'updateContext', content: state.contextText });
       operations.push(...(JSON.parse(JSON.stringify(state.structure)) as StructureChange[]));
       if (!operations.length) {
@@ -299,7 +408,7 @@ export function createWorkspaceModel(projectId: number, api: WorkspaceApi, delay
         state.saveError = '';
         return;
       }
-      const body: Changes = { baseRevisionId: state.snapshot.revision.id, operations };
+      const body: Changes = { baseRevisionId: snapshot.revision.id, operations };
       const bytes = new TextEncoder();
       if (
         operations.length > 200 ||
@@ -318,6 +427,7 @@ export function createWorkspaceModel(projectId: number, api: WorkspaceApi, delay
         body,
         key: crypto.randomUUID(),
         ...(created ? { selectPath: created.path.normalize('NFC') } : {}),
+        ...(Object.keys(rewriteInputs).length ? { rewriteInputs } : {}),
       };
     }
     const attempt = state.pending;
@@ -335,28 +445,43 @@ export function createWorkspaceModel(projectId: number, api: WorkspaceApi, delay
         ? await api.state(projectId, controller.signal, result.revisionId)
         : null;
       if (!active) return;
+      const uploadedTexts = new Map<number, string>();
+      for (const operation of attempt.body.operations) {
+        if (operation.type !== 'createFile' && operation.type !== 'attachFile') continue;
+        const created = result.createdFiles.find(
+          (file) => file.path === operation.path.normalize('NFC'),
+        );
+        if (
+          !created ||
+          !snapshot?.tree.some(
+            (meta) =>
+              meta.fileId === created.fileId &&
+              meta.path === created.path &&
+              meta.contentKind === (operation.type === 'createFile' ? 'text' : 'binary'),
+          )
+        )
+          throw new ApiError(200, 'INVALID_RESPONSE', '', null);
+        if (operation.type === 'createFile') uploadedTexts.set(created.fileId, operation.content);
+      }
+      const rebased = snapshot ? await reconcileReferences(attempt, state.snapshot) : undefined;
+      if (!active) return;
       for (const change of attempt.body.operations) {
-        if (change.type === 'updateText' && state.files[change.fileId])
-          state.files[change.fileId]!.base = change.content;
+        if (change.type === 'updateText') {
+          const file = state.files[change.fileId];
+          if (file) {
+            if (file.content === attempt.rewriteInputs?.[change.fileId])
+              file.content = change.content;
+            file.base = change.content;
+          }
+        }
         if (change.type === 'updateContext' && !snapshot)
           state.snapshot.contextText = change.content;
-        if (change.type === 'createFile' || change.type === 'attachFile') {
-          const file = result.createdFiles.find(
-            (file) => file.path === change.path.normalize('NFC'),
-          );
-          if (
-            !file ||
-            !snapshot?.tree.some(
-              (meta) =>
-                meta.fileId === file.fileId &&
-                meta.path === file.path &&
-                meta.contentKind === (change.type === 'createFile' ? 'text' : 'binary'),
-            )
-          )
-            throw new ApiError(200, 'INVALID_RESPONSE', '', null);
-          if (change.type === 'createFile')
-            state.files[file.fileId] = { base: change.content, content: change.content };
-        }
+      }
+      for (const [fileId, content] of uploadedTexts)
+        state.files[fileId] = { base: content, content };
+      for (const [fileId, content] of rebased ?? []) {
+        const file = state.files[fileId];
+        if (file) file.content = content;
       }
       if (snapshot) {
         state.snapshot = snapshot;

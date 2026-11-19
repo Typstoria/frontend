@@ -36,6 +36,7 @@ import {
 import { structureError } from './file-structure';
 import { ApiError } from '../../shared/api/client';
 import { matchesResourceType } from './resource-formats';
+import { isTextUpload, readTextUpload } from './text-upload';
 import { createCompilationApi, type Diagnostic } from './compilation-api';
 import { compilationRetryLabels, createCompilationModel } from './compilation-model';
 import { createHistoryApi } from './history-api';
@@ -121,15 +122,16 @@ const activeTab = ref<TabId | null>(null);
 const contextOpen = computed(() => activeTab.value === 'context');
 const hasFileTab = computed(() => typeof activeTab.value === 'number');
 const contextInput = ref<HTMLTextAreaElement | null>(null);
-type ResourceAction = { directory: string; path?: string; fileId?: number };
+type ResourceAction = { directory: string; path?: string; fileId?: number; files?: File[] };
 const resourceAction = ref<ResourceAction | null>(null);
 const resourceBusy = ref(false);
 const resourceUploading = ref(false);
 const resourceError = ref('');
 const resourceAttempted = ref(false);
+const treeDropError = ref('');
 const downloading = ref(false);
 const downloadError = ref('');
-let stagedResource: { file: File; upload: ProjectUpload } | null = null;
+const stagedResources = new Map<File, ProjectUpload>();
 let deferredResource: ResourceAction | null = null;
 let resourceFocus: HTMLElement | null = null;
 let uploadController: AbortController | undefined;
@@ -257,9 +259,10 @@ async function openContext() {
 }
 function openResource(action: ResourceAction, trigger?: HTMLElement) {
   if (actionsDisabled.value || state.status === 'saving') return;
+  treeDropError.value = '';
   resourceAttempted.value = false;
   model.pauseAutosave(true);
-  stagedResource = null;
+  stagedResources.clear();
   resourceError.value = '';
   resourceFocus = fileDialogTrigger(trigger);
   if (isMobile.value && mobileFilesVisible.value) {
@@ -432,10 +435,12 @@ async function submitProjectAction() {
     projectActionBusy.value = false;
   }
 }
-async function submitResource(input: { file: File; path: string }) {
+async function submitResource(inputs: { file: File; path: string }[]) {
   const action = resourceAction.value;
   if (
     !action ||
+    !state.snapshot ||
+    !inputs.length ||
     resourceBusy.value ||
     state.pending ||
     ['saving', 'conflict'].includes(state.status)
@@ -443,34 +448,57 @@ async function submitResource(input: { file: File; path: string }) {
     return;
   resourceBusy.value = true;
   resourceError.value = '';
+  uploadController = new AbortController();
+  const signal = AbortSignal.any([resourceController.signal, uploadController.signal]);
   try {
-    if (
-      stagedResource?.file !== input.file ||
-      Date.parse(stagedResource.upload.expiresAt) <= Date.now()
-    ) {
-      uploadController = new AbortController();
-      resourceUploading.value = true;
-      const signal = AbortSignal.any([resourceController.signal, uploadController.signal]);
-      const upload = await resourceApi.upload(projectId, input.file, signal);
-      signal.throwIfAborted();
-      resourceUploading.value = false;
-      stagedResource = { file: input.file, upload };
+    resourceUploading.value = true;
+    for (const file of stagedResources.keys()) {
+      if (!inputs.some((input) => input.file === file)) stagedResources.delete(file);
     }
-    const upload = stagedResource.upload;
-    if (!matchesResourceType(input.path, upload.mediaType)) {
-      resourceError.value = 'Розширення шляху має відповідати формату вибраного файла.';
-      return;
+    const textContents = new Map<File, string>();
+    for (const { file } of inputs) {
+      if (!isTextUpload(file)) continue;
+      try {
+        textContents.set(file, await readTextUpload(file));
+        signal.throwIfAborted();
+      } catch (error) {
+        if (!signal.aborted)
+          resourceError.value =
+            error instanceof Error ? error.message : 'Не вдалося прочитати файл.';
+        return;
+      }
     }
-    const operation: StructureChange =
-      action.fileId === undefined
-        ? { type: 'attachFile', path: input.path, uploadId: upload.uploadId }
-        : { type: 'replaceFile', fileId: action.fileId, uploadId: upload.uploadId };
+    const operations: StructureChange[] = [];
+    for (const { file, path } of inputs) {
+      const content = textContents.get(file);
+      if (content !== undefined) {
+        operations.push({ type: 'createFile', path, content });
+        continue;
+      }
+      let upload = stagedResources.get(file);
+      if (!upload || Date.parse(upload.expiresAt) <= Date.now()) {
+        upload = await resourceApi.upload(projectId, file, signal);
+        signal.throwIfAborted();
+        stagedResources.set(file, upload);
+      }
+      if (!matchesResourceType(path, upload.mediaType)) {
+        resourceError.value = 'Розширення шляху має відповідати формату вибраного файла.';
+        return;
+      }
+      operations.push(
+        action.fileId === undefined
+          ? { type: 'attachFile', path, uploadId: upload.uploadId }
+          : { type: 'replaceFile', fileId: action.fileId, uploadId: upload.uploadId },
+      );
+    }
+    resourceUploading.value = false;
+    signal.throwIfAborted();
     resourceAttempted.value = true;
-    if (await model.mutate([operation])) {
+    if (await model.mutate(operations)) {
       if (action.fileId === undefined) showCreatedFile();
       resourceAction.value = null;
     } else if (state.status === 'conflict') resourceAction.value = null;
-    else if (!state.structure.length && !state.pending) stagedResource = null;
+    else if (!state.structure.length && !state.pending) stagedResources.clear();
   } catch (error) {
     if (!resourceController.signal.aborted && !uploadController?.signal.aborted)
       resourceError.value =
@@ -494,7 +522,7 @@ async function retryResource() {
     else if (!state.pending && !state.structure.length && state.status !== 'failed') {
       if (resourceAction.value?.fileId === undefined) showCreatedFile();
       resourceAction.value = null;
-    } else if (!state.pending && !state.structure.length) stagedResource = null;
+    } else if (!state.pending && !state.structure.length) stagedResources.clear();
   } finally {
     resourceBusy.value = false;
   }
@@ -502,13 +530,12 @@ async function retryResource() {
 function dismissResource() {
   if (resourceBusy.value && !resourceUploading.value) return;
   uploadController?.abort();
-  if (state.structure.some((op) => op.type === 'attachFile' || op.type === 'replaceFile'))
-    model.cancelStructure();
+  if (resourceAttempted.value) model.cancelStructure();
   resourceAction.value = null;
 }
 function resourceClosed() {
   model.pauseAutosave(false);
-  stagedResource = null;
+  stagedResources.clear();
   if (resourceFocus?.isConnected) resourceFocus.focus();
   resourceFocus = null;
 }
@@ -544,6 +571,7 @@ const inlineName = ref<{
   name: string;
 } | null>(null);
 const nameTransfer = ref<string | null>(null);
+const moveDestination = ref<string>();
 const nameError = ref('');
 const actionAttempted = ref(false);
 const submittingFileAction = ref(false);
@@ -574,6 +602,7 @@ function openFileAction(action: FileAction, trigger?: HTMLElement) {
   focusTreeTarget = undefined;
   actionAttempted.value = false;
   nameTransfer.value = null;
+  moveDestination.value = undefined;
   nameError.value = '';
   fileActionFocus = fileDialogTrigger(trigger);
   model.pauseAutosave(true);
@@ -617,6 +646,24 @@ function openTreeAction(kind: TreeAction, target: number | string, trigger: HTML
     openFileAction({ kind, fileId: target }, trigger);
   if (kind === 'replace' && file.contentKind === 'binary')
     openResource({ directory: parentFolder(file.path), path: file.path, fileId: target }, trigger);
+}
+const treeDropDisabled = computed(
+  () =>
+    !!resourceAction.value || !!projectAction.value || historyOpen.value || actionsDisabled.value,
+);
+function moveTreeDrop(target: number | string, directory: string, trigger: HTMLElement) {
+  if (treeDropDisabled.value) return;
+  treeDropError.value = '';
+  const action =
+    typeof target === 'number'
+      ? { kind: 'move' as const, fileId: target }
+      : { kind: 'moveDirectory' as const, directoryPath: target };
+  openFileAction(action, trigger);
+  moveDestination.value = directory;
+}
+function uploadTreeDrop(files: File[], directory: string, trigger: HTMLElement) {
+  if (treeDropDisabled.value || !files.length) return;
+  openResource({ directory, files }, trigger);
 }
 function fileDrawerClosed() {
   if (deferredResource) {
@@ -1315,6 +1362,9 @@ onBeforeUnmount(() => {
       <p v-if="pdfOpenError && !historyOpen" class="editor-notice" role="alert">
         {{ pdfOpenError }}
       </p>
+      <p v-if="treeDropError && !historyOpen" class="editor-notice" role="alert">
+        {{ treeDropError }}
+      </p>
       <div
         v-if="!showOutput && !historyOpen && !state.conflict && compilation.state.error"
         class="editor-notice"
@@ -1528,12 +1578,16 @@ onBeforeUnmount(() => {
             :main-file-id="state.snapshot.mainFileId"
             :disabled="actionsDisabled"
             :replace-disabled="state.status === 'saving'"
+            :drop-disabled="treeDropDisabled"
             :mobile="false"
             v-bind="inlineEdit ? { inlineEdit } : {}"
             @toggle="toggleFolder"
             @select="selectTreeFile"
             @select-folder="treeSelection = $event"
             @action="openTreeAction"
+            @move-drop="moveTreeDrop"
+            @upload-drop="uploadTreeDrop"
+            @folder-drop-rejected="treeDropError = 'Перетягніть окремі файли без папок.'"
             @inline-input="updateInlineName"
             @inline-submit="submitInlineName"
             @inline-cancel="dismissFileAction"
@@ -1721,6 +1775,7 @@ onBeforeUnmount(() => {
         :open="!!fileAction && !inlineName"
         :action="fileAction"
         v-bind="nameTransfer === null ? {} : { initialName: nameTransfer }"
+        :initial-directory="moveDestination"
         :files="state.snapshot.tree"
         :directories="directories"
         :main-file-id="state.snapshot.mainFileId"
@@ -1737,6 +1792,7 @@ onBeforeUnmount(() => {
         :open="!!resourceAction"
         :replacement-path="resourceAction?.path"
         :directory="resourceAction?.directory ?? ''"
+        :initial-files="resourceAction?.files"
         :files="state.snapshot.tree"
         :directories="directories"
         :busy="resourceBusy || state.status === 'saving'"
