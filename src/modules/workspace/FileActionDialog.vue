@@ -1,11 +1,19 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import ModalDialog from '../../shared/ui/ModalDialog.vue';
-import { filePathError, normalizeFilePath } from './file-path';
+import {
+  fileNameError,
+  filePathError,
+  filePathInFolder,
+  normalizeFilePath,
+  projectFolders,
+} from './file-path';
 import type { Snapshot } from './workspace-api';
 import { matchesResourceType } from './resource-formats';
 
-type Action = { kind: 'create' | 'rename' | 'delete' | 'entrypoint'; fileId?: number };
+type Action =
+  | { kind: 'create'; directory: string }
+  | { kind: 'rename' | 'delete' | 'entrypoint'; fileId: number };
 
 const props = defineProps<{
   open: boolean;
@@ -24,20 +32,25 @@ const emit = defineEmits<{
   closed: [];
 }>();
 
-const path = ref('new.typ');
+const path = ref('');
+const directory = ref('');
+const fileName = ref('new.typ');
 const replacementId = ref<number | undefined>();
-const fieldError = ref('');
 const currentFile = computed(() =>
-  props.files.find((file) => file.fileId === props.action?.fileId),
+  props.files.find(
+    (file) => file.fileId === (props.action?.kind === 'create' ? undefined : props.action?.fileId),
+  ),
 );
 const candidates = computed(() =>
   props.files.filter(
     (file) =>
-      file.fileId !== props.action?.fileId &&
+      file.fileId !== (props.action?.kind === 'create' ? undefined : props.action?.fileId) &&
       file.contentKind === 'text' &&
       file.path.endsWith('.typ'),
   ),
 );
+const folderSuggestions = computed(() => projectFolders(props.files));
+const createPath = computed(() => filePathInFolder(directory.value, fileName.value));
 const needsReplacement = computed(() =>
   props.action?.kind === 'delete'
     ? props.action.fileId === props.mainFileId
@@ -74,13 +87,14 @@ const actionName = computed(() => {
   }
 });
 const validationError = computed(() => {
-  if (fieldError.value) return fieldError.value;
-  if (props.action?.kind === 'create' || props.action?.kind === 'rename') {
-    const error = filePathError(
-      path.value,
-      props.files,
-      props.action.kind === 'rename' ? props.action.fileId : undefined,
-    );
+  if (props.action?.kind === 'create') {
+    const nameError = fileNameError(fileName.value);
+    if (nameError) return nameError;
+    const error = filePathError(createPath.value, props.files);
+    if (error) return error;
+  }
+  if (props.action?.kind === 'rename') {
+    const error = filePathError(path.value, props.files, props.action.fileId);
     if (error) return error;
     if (
       props.action.kind === 'rename' &&
@@ -88,13 +102,6 @@ const validationError = computed(() => {
       !matchesResourceType(path.value, currentFile.value.mediaType)
     )
       return 'Розширення шляху має відповідати формату ресурсу.';
-    if (needsReplacement.value && !candidates.value.length)
-      return 'Спершу створіть інший файл із розширенням .typ.';
-    if (
-      needsReplacement.value &&
-      !candidates.value.some((file) => file.fileId === replacementId.value)
-    )
-      return 'Виберіть новий головний файл.';
   }
   if (needsReplacement.value) {
     if (!candidates.value.length) return 'Спершу створіть інший файл із розширенням .typ.';
@@ -110,12 +117,22 @@ const validationError = computed(() => {
 });
 
 watch(
-  () => [props.open, props.action?.kind, props.action?.fileId, currentFile.value?.path] as const,
+  () =>
+    [
+      props.open,
+      props.action?.kind,
+      props.action?.kind === 'create' ? props.action.directory : props.action?.fileId,
+    ] as const,
   ([open]) => {
     if (!open) return;
-    path.value = props.action?.kind === 'rename' ? (currentFile.value?.path ?? '') : 'new.typ';
+    if (props.action?.kind === 'create') {
+      directory.value = props.action.directory;
+      fileName.value = 'new.typ';
+      path.value = '';
+    } else if (props.action?.kind === 'rename') {
+      path.value = currentFile.value?.path ?? '';
+    }
     replacementId.value = candidates.value[0]?.fileId;
-    fieldError.value = '';
   },
   { immediate: true },
 );
@@ -128,7 +145,7 @@ function submit() {
   if (props.busy || props.locked || !props.action || validationError.value) return;
   if (props.action.kind === 'create' || props.action.kind === 'rename') {
     emit('submit', {
-      path: normalizeFilePath(path.value),
+      path: normalizeFilePath(props.action.kind === 'create' ? createPath.value : path.value),
       ...(needsReplacement.value && replacementId.value !== undefined
         ? { replacementId: replacementId.value }
         : {}),
@@ -159,7 +176,37 @@ function dismiss() {
     @closed="emit('closed')"
   >
     <form v-if="action" novalidate @submit.prevent="submit">
-      <div v-if="action.kind === 'create' || action.kind === 'rename'" class="form-field">
+      <template v-if="action.kind === 'create'">
+        <div class="form-field">
+          <label for="file-action-directory">Папка</label>
+          <input
+            id="file-action-directory"
+            v-model="directory"
+            list="file-action-folders"
+            placeholder="Корінь проєкту"
+            autocomplete="off"
+            :disabled="busy || locked"
+            :aria-invalid="!!validationError"
+            :aria-describedby="validationError ? 'file-action-error' : undefined"
+          />
+          <datalist id="file-action-folders">
+            <option v-for="folder in folderSuggestions" :key="folder" :value="folder" />
+          </datalist>
+        </div>
+        <div class="form-field">
+          <label for="file-action-path">Назва файла</label>
+          <input
+            id="file-action-path"
+            v-model="fileName"
+            autofocus
+            autocomplete="off"
+            :disabled="busy || locked"
+            :aria-invalid="!!validationError"
+            :aria-describedby="validationError ? 'file-action-error' : undefined"
+          />
+        </div>
+      </template>
+      <div v-else-if="action.kind === 'rename'" class="form-field">
         <label for="file-action-path">Шлях файла</label>
         <input
           id="file-action-path"
@@ -169,7 +216,6 @@ function dismiss() {
           :disabled="busy || locked"
           :aria-invalid="!!validationError"
           :aria-describedby="validationError ? 'file-action-error' : undefined"
-          @input="fieldError = ''"
         />
       </div>
       <template v-else-if="action.kind === 'delete'">

@@ -32,7 +32,7 @@ function trapFocus(event: KeyboardEvent) {
     dialog?.querySelectorAll<HTMLElement>(
       'button:not(:disabled), input:not(:disabled), a[href], select:not(:disabled), textarea:not(:disabled), summary, [tabindex]:not([tabindex="-1"])',
     ) ?? [],
-  ).filter((element) => element.getClientRects().length > 0);
+  ).filter((element) => element.tabIndex >= 0 && element.getClientRects().length > 0);
   const target = event.shiftKey ? controls.at(-1) : controls[0];
   const boundary = event.shiftKey ? controls[0] : controls.at(-1);
   if (!controls.length || document.activeElement === boundary) {

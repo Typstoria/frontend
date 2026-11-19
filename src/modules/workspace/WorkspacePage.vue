@@ -26,6 +26,7 @@ import ModalDialog from '../../shared/ui/ModalDialog.vue';
 import FileActionDialog from './FileActionDialog.vue';
 import ResourceDialog from './ResourceDialog.vue';
 import type { ProjectUpload, StructureChange } from './workspace-api';
+import { parentFolder } from './file-path';
 import { ApiError } from '../../shared/api/client';
 import { matchesResourceType } from './resource-formats';
 import { createCompilationApi, type Diagnostic } from './compilation-api';
@@ -111,7 +112,8 @@ const activeTab = ref<TabId | null>(null);
 const contextOpen = computed(() => activeTab.value === 'context');
 const hasFileTab = computed(() => typeof activeTab.value === 'number');
 const contextInput = ref<HTMLTextAreaElement | null>(null);
-const resourceAction = ref<{ path?: string; fileId?: number } | null>(null);
+type ResourceAction = { directory: string; path?: string; fileId?: number };
+const resourceAction = ref<ResourceAction | null>(null);
 const resourceBusy = ref(false);
 const resourceUploading = ref(false);
 const resourceError = ref('');
@@ -119,7 +121,7 @@ const resourceAttempted = ref(false);
 const downloading = ref(false);
 const downloadError = ref('');
 let stagedResource: { file: File; upload: ProjectUpload } | null = null;
-let deferredResource = false;
+let deferredResource: ResourceAction | null = null;
 let resourceFocus: HTMLElement | null = null;
 let uploadController: AbortController | undefined;
 
@@ -200,7 +202,6 @@ function closeHistory() {
 watch(historyOpen, async (open) => {
   if (open) {
     mobileFilesVisible.value = false;
-    fileMenuOpen.value = false;
     if (resourceAction.value && !resourceBusy.value && !state.pending) dismissResource();
     if (fileAction.value && !submittingFileAction.value && !state.pending) dismissFileAction();
     void refreshHistoryHead();
@@ -244,27 +245,19 @@ async function openContext() {
   await nextTick();
   if (contextOpen.value && !isMobile.value) contextInput.value?.focus({ preventScroll: true });
 }
-function openResource(replace: boolean) {
+function openResource(action: ResourceAction, trigger?: HTMLElement) {
   if (actionsDisabled.value || state.status === 'saving') return;
-  if (replace && selectedMeta.value?.contentKind !== 'binary') return;
   resourceAttempted.value = false;
   model.pauseAutosave(true);
-  fileMenuOpen.value = false;
   stagedResource = null;
   resourceError.value = '';
-  resourceFocus = replace
-    ? fileMenuTrigger.value
-    : isMobile.value
-      ? document.querySelector<HTMLElement>('.editor-files-toggle')
-      : (document.activeElement as HTMLElement | null);
-  if (!replace && isMobile.value && mobileFilesVisible.value) {
-    deferredResource = true;
+  resourceFocus = fileDialogTrigger(trigger);
+  if (isMobile.value && mobileFilesVisible.value) {
+    deferredResource = action;
     mobileFilesVisible.value = false;
     return;
   }
-  if (!replace) resourceAction.value = {};
-  else if (selectedMeta.value?.contentKind === 'binary')
-    resourceAction.value = { path: selectedMeta.value.path, fileId: selectedMeta.value.fileId };
+  resourceAction.value = action;
 }
 async function submitResource(input: { file: File; path: string }) {
   const action = resourceAction.value;
@@ -301,7 +294,7 @@ async function submitResource(input: { file: File; path: string }) {
         : { type: 'replaceFile', fileId: action.fileId, uploadId: upload.uploadId };
     resourceAttempted.value = true;
     if (await model.mutate([operation])) {
-      if (action.fileId === undefined) showTab(state.selectedId);
+      if (action.fileId === undefined) showCreatedFile();
       resourceAction.value = null;
     } else if (state.status === 'conflict') resourceAction.value = null;
     else if (!state.structure.length && !state.pending) stagedResource = null;
@@ -326,7 +319,7 @@ async function retryResource() {
     await model.save();
     if (state.status === 'conflict') resourceAction.value = null;
     else if (!state.pending && !state.structure.length && state.status !== 'failed') {
-      if (resourceAction.value?.fileId === undefined) showTab(state.selectedId);
+      if (resourceAction.value?.fileId === undefined) showCreatedFile();
       resourceAction.value = null;
     } else if (!state.pending && !state.structure.length) stagedResource = null;
   } finally {
@@ -367,15 +360,14 @@ async function downloadResource() {
     downloading.value = false;
   }
 }
-type FileAction = { kind: 'create' | 'rename' | 'delete' | 'entrypoint'; fileId?: number };
+type FileAction =
+  | { kind: 'create'; directory: string; fileId?: never }
+  | { kind: 'rename' | 'delete' | 'entrypoint'; fileId: number };
 const fileAction = ref<FileAction | null>(null);
 const submittingFileAction = ref(false);
 let fileActionFocus: HTMLElement | null = null;
-let fileActionSucceeded = false;
+let focusCreatedFile = false;
 let deferredFileAction: FileAction | null = null;
-const fileMenuOpen = ref(false);
-const fileMenuHost = ref<HTMLElement | null>(null);
-const fileMenuTrigger = ref<HTMLButtonElement | null>(null);
 const actionsDisabled = computed(
   () =>
     state.loading ||
@@ -386,43 +378,34 @@ const actionsDisabled = computed(
     state.structure.length > 0 ||
     (!!state.pending && state.status !== 'saving'),
 );
-function closeFileMenu(event: Event) {
-  if (event.target instanceof Node && !fileMenuHost.value?.contains(event.target))
-    fileMenuOpen.value = false;
+function fileDialogTrigger(trigger?: HTMLElement) {
+  if (isMobile.value) return document.querySelector<HTMLElement>('.editor-files-toggle');
+  return trigger ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
 }
-async function toggleFileMenu() {
-  fileMenuOpen.value = !fileMenuOpen.value;
-  if (fileMenuOpen.value) {
-    await nextTick();
-    fileMenuHost.value?.querySelector<HTMLButtonElement>('[data-file-action]')?.focus();
-  }
-}
-function escapeFileMenu() {
-  fileMenuOpen.value = false;
-  fileMenuTrigger.value?.focus();
-}
-function openFileAction(kind: FileAction['kind']) {
+function openFileAction(action: FileAction, trigger?: HTMLElement) {
   if (actionsDisabled.value) return;
-  fileActionSucceeded = false;
-  fileActionFocus =
-    kind === 'create'
-      ? isMobile.value
-        ? document.querySelector<HTMLElement>('.editor-files-toggle')
-        : document.activeElement instanceof HTMLElement
-          ? document.activeElement
-          : null
-      : fileMenuTrigger.value;
-  fileMenuOpen.value = false;
-  const action: FileAction = kind === 'create' ? { kind } : { kind, fileId: state.selectedId };
+  focusCreatedFile = false;
+  fileActionFocus = fileDialogTrigger(trigger);
   if (isMobile.value && mobileFilesVisible.value) {
     deferredFileAction = action;
     mobileFilesVisible.value = false;
   } else fileAction.value = action;
 }
+function openTreeAction(
+  kind: 'rename' | 'delete' | 'entrypoint' | 'replace',
+  fileId: number,
+  trigger: HTMLElement,
+) {
+  const file = state.snapshot?.tree.find((entry) => entry.fileId === fileId);
+  if (!file) return;
+  if (kind !== 'replace') openFileAction({ kind, fileId }, trigger);
+  else if (file.contentKind === 'binary')
+    openResource({ directory: parentFolder(file.path), path: file.path, fileId }, trigger);
+}
 function fileDrawerClosed() {
   if (deferredResource) {
-    deferredResource = false;
-    resourceAction.value = {};
+    resourceAction.value = deferredResource;
+    deferredResource = null;
   }
   if (deferredFileAction) {
     fileAction.value = deferredFileAction;
@@ -436,8 +419,9 @@ function dismissFileAction() {
 }
 function fileActionClosed() {
   if (fileAction.value) return;
-  if (fileActionSucceeded && !isMobile.value) editor.value?.focus();
+  if (focusCreatedFile && !isMobile.value) editor.value?.focus();
   else if (fileActionFocus?.isConnected) fileActionFocus.focus();
+  else document.querySelector<HTMLElement>('.editor-files-toggle')?.focus();
   fileActionFocus = null;
 }
 async function submitFileAction(input: { path?: string; replacementId?: number }) {
@@ -457,9 +441,12 @@ async function submitFileAction(input: { path?: string; replacementId?: number }
   if (!operations.length) return;
   submittingFileAction.value = true;
   try {
-    fileActionSucceeded = await model.mutate(operations);
-    if (fileActionSucceeded && action.kind === 'create') showTab(state.selectedId);
-    if (fileActionSucceeded || state.status === 'conflict') fileAction.value = null;
+    const saved = await model.mutate(operations);
+    if (saved && action.kind === 'create') {
+      showCreatedFile();
+      focusCreatedFile = true;
+    }
+    if (saved || state.status === 'conflict') fileAction.value = null;
   } finally {
     submittingFileAction.value = false;
   }
@@ -470,8 +457,10 @@ async function retryFileAction() {
   try {
     await model.save();
     if (!state.pending && !state.structure.length) {
-      if (fileAction.value?.kind === 'create') showTab(state.selectedId);
-      fileActionSucceeded = true;
+      if (fileAction.value?.kind === 'create') {
+        showCreatedFile();
+        focusCreatedFile = true;
+      }
       fileAction.value = null;
     } else if (state.status === 'conflict') fileAction.value = null;
   } finally {
@@ -524,6 +513,18 @@ function downloadPdf(artifact: NonNullable<typeof compilation.state.artifact>) {
 const desktopFilesVisible = ref(true);
 const mobileFilesVisible = ref(false);
 const collapsedPaths = ref<string[]>([]);
+const treeSelection = ref<number | string | null>(null);
+const selectedTreeFile = computed(() =>
+  typeof treeSelection.value === 'number' ? treeSelection.value : 0,
+);
+const selectedFolder = computed(() =>
+  typeof treeSelection.value === 'string' ? treeSelection.value : null,
+);
+const creationDirectory = computed(() => {
+  if (selectedFolder.value !== null) return selectedFolder.value;
+  const file = state.snapshot?.tree.find((entry) => entry.fileId === selectedTreeFile.value);
+  return file ? parentFolder(file.path) : '';
+});
 function toggleFolder(path: string) {
   collapsedPaths.value = collapsedPaths.value.includes(path)
     ? collapsedPaths.value.filter((p) => p !== path)
@@ -574,10 +575,17 @@ function showTab(id: TabId) {
   activeTab.value = id;
 }
 
+function showCreatedFile() {
+  const file = state.snapshot?.tree.find((entry) => entry.fileId === state.selectedId);
+  if (!file) return;
+  collapsedPaths.value = collapsedPaths.value.filter((path) => !file.path.startsWith(`${path}/`));
+  treeSelection.value = file.fileId;
+  showTab(file.fileId);
+}
+
 async function activateTab(id: TabId) {
   if (id !== 'context' && !state.snapshot?.tree.some((file) => file.fileId === id)) return;
   showTab(id);
-  fileMenuOpen.value = false;
   downloadError.value = '';
   if (id !== 'context' && (id !== state.selectedId || state.fileError)) await model.select(id);
 }
@@ -624,6 +632,12 @@ watch(
   (tree) => {
     if (!tree) return;
     const valid = new Set(tree.map((file) => file.fileId));
+    const selection = treeSelection.value;
+    if (
+      (typeof selection === 'number' && !valid.has(selection)) ||
+      (typeof selection === 'string' && !tree.some((file) => file.path.startsWith(`${selection}/`)))
+    )
+      treeSelection.value = null;
     const remaining = tabIds.value.filter((id) => id === 'context' || valid.has(id));
     if (remaining.length !== tabIds.value.length) {
       const replacement = valid.has(state.selectedId)
@@ -640,6 +654,10 @@ async function selectFile(fileId: number) {
   if (activeTab.value !== fileId) return;
   if (isMobile.value) mobileFilesVisible.value = false;
   else await nextTick(() => editor.value?.focus());
+}
+function selectTreeFile(fileId: number) {
+  treeSelection.value = fileId;
+  void selectFile(fileId);
 }
 async function openMainFile() {
   const id = state.snapshot?.mainFileId;
@@ -751,7 +769,6 @@ async function loadWorkspace() {
 onMounted(() => {
   mobileQuery.addEventListener('change', viewportChanged);
   splitQuery.addEventListener('change', splitChanged);
-  document.addEventListener('pointerdown', closeFileMenu);
   void loadWorkspace();
 });
 onBeforeUnmount(() => {
@@ -760,7 +777,6 @@ onBeforeUnmount(() => {
   compilation.dispose();
   mobileQuery.removeEventListener('change', viewportChanged);
   splitQuery.removeEventListener('change', splitChanged);
-  document.removeEventListener('pointerdown', closeFileMenu);
   if (!leaving && !identitySession.user.value) retainWorkspace(ownerId, projectId, model.recover());
   if (!leaving && restoreAttempt.value)
     retainWorkspaceRestore(ownerId, projectId, restoreAttempt.value);
@@ -1110,18 +1126,24 @@ onBeforeUnmount(() => {
             <FileAddMenu
               :disabled="actionsDisabled"
               :upload-disabled="state.status === 'saving'"
-              @create="openFileAction('create')"
-              @upload="openResource(false)"
+              @create="openFileAction({ kind: 'create', directory: creationDirectory })"
+              @upload="openResource({ directory: creationDirectory })"
             />
           </div>
           <WorkspaceFiles
             :files="state.snapshot.tree"
-            :selected-id="hasFileTab ? state.selectedId : 0"
+            :selected-id="selectedTreeFile"
+            :selected-folder="selectedFolder"
             :dirty-ids="dirtyIds"
             :collapsed-paths="collapsedPaths"
             :main-file-id="state.snapshot.mainFileId"
+            :disabled="actionsDisabled"
+            :replace-disabled="state.status === 'saving'"
+            :mobile="false"
             @toggle="toggleFolder"
-            @select="selectFile"
+            @select="selectTreeFile"
+            @select-folder="treeSelection = $event"
+            @action="openTreeAction"
           />
         </aside>
         <section v-show="!onlyOutput" class="editor-source" aria-label="Редактор файла">
@@ -1136,60 +1158,6 @@ onBeforeUnmount(() => {
               @close-all="retainTabs([])"
               @move="moveTab"
             />
-            <div
-              v-if="hasFileTab"
-              ref="fileMenuHost"
-              class="file-menu-host"
-              @keydown.esc.stop.prevent="escapeFileMenu"
-            >
-              <button
-                ref="fileMenuTrigger"
-                class="file-icon-button"
-                :aria-label="`Дії з файлом: ${selectedMeta?.path ?? ''}`"
-                title="Дії з файлом"
-                :aria-expanded="fileMenuOpen"
-                :disabled="actionsDisabled || !selectedMeta"
-                @click="toggleFileMenu"
-              >
-                <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                  <circle cx="4" cy="10" r="1.4" />
-                  <circle cx="10" cy="10" r="1.4" />
-                  <circle cx="16" cy="10" r="1.4" />
-                </svg>
-              </button>
-              <div
-                v-if="fileMenuOpen"
-                class="file-action-list"
-                role="group"
-                aria-label="Дії з файлом"
-              >
-                <button data-file-action @click="openFileAction('rename')">
-                  Перейменувати файл
-                </button>
-                <button
-                  v-if="selectedMeta?.contentKind === 'binary'"
-                  data-file-action
-                  :disabled="state.status === 'saving'"
-                  @click="openResource(true)"
-                >
-                  Замінити файл
-                </button>
-                <button
-                  v-if="
-                    selectedMeta?.contentKind === 'text' &&
-                    selectedMeta.path.endsWith('.typ') &&
-                    selectedMeta.fileId !== state.snapshot.mainFileId
-                  "
-                  data-file-action
-                  @click="openFileAction('entrypoint')"
-                >
-                  Зробити головним
-                </button>
-                <button data-file-action class="danger-text" @click="openFileAction('delete')">
-                  Видалити файл
-                </button>
-              </div>
-            </div>
           </div>
           <div
             id="workspace-tab-panel"
@@ -1330,17 +1298,23 @@ onBeforeUnmount(() => {
             class="drawer-add"
             :disabled="actionsDisabled"
             :upload-disabled="state.status === 'saving'"
-            @create="openFileAction('create')"
-            @upload="openResource(false)"
+            @create="openFileAction({ kind: 'create', directory: creationDirectory })"
+            @upload="openResource({ directory: creationDirectory })"
           />
           <WorkspaceFiles
             :files="state.snapshot.tree"
-            :selected-id="hasFileTab ? state.selectedId : 0"
+            :selected-id="selectedTreeFile"
+            :selected-folder="selectedFolder"
             :dirty-ids="dirtyIds"
             :collapsed-paths="collapsedPaths"
             :main-file-id="state.snapshot.mainFileId"
+            :disabled="actionsDisabled"
+            :replace-disabled="state.status === 'saving'"
+            :mobile="true"
             @toggle="toggleFolder"
-            @select="selectFile"
+            @select="selectTreeFile"
+            @select-folder="treeSelection = $event"
+            @action="openTreeAction"
           />
         </ModalDialog>
       </div>
@@ -1361,6 +1335,7 @@ onBeforeUnmount(() => {
       <ResourceDialog
         :open="!!resourceAction"
         :replacement-path="resourceAction?.path"
+        :directory="resourceAction?.directory ?? ''"
         :files="state.snapshot.tree"
         :busy="resourceBusy || state.status === 'saving'"
         :uploading="resourceUploading"

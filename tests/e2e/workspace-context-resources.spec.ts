@@ -165,7 +165,7 @@ async function installApi(
     revisionId: 100,
     mainFileId: 10,
     contextText: 'Початковий контекст',
-    nextFileId: 12,
+    nextFileId: 13,
     nextUploadId: 30,
     files: [
       {
@@ -185,6 +185,15 @@ async function installApi(
         sizeBytes: 14,
         mediaType: 'text/plain; charset=utf-8',
         content: 'Нотатки\n',
+      },
+      {
+        fileId: 12,
+        path: 'chapters/intro.typ',
+        contentKind: 'text',
+        sha256: hash,
+        sizeBytes: 9,
+        mediaType: 'text/plain; charset=utf-8',
+        content: '# Розділ\n',
       },
     ],
     uploads: new Map(),
@@ -298,9 +307,10 @@ async function openResources(page: Page) {
   await page.getByRole('button', { name: 'Додати файл', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Завантажити файл', exact: true }).click();
   await expect(page.getByRole('dialog', { name: 'Завантажити файл', exact: true })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Файли', exact: true })).toHaveCount(0);
 }
 
-async function attachPng(page: Page, name = 'diagram.png') {
+async function attachPng(page: Page, name = 'diagram.png', directory = '') {
   const dialog = page.getByRole('dialog', { name: 'Завантажити файл', exact: true });
   const bytes = Buffer.from('fake-png-resource');
   await dialog.getByLabel('Вибрати файл', { exact: true }).setInputFiles({
@@ -308,8 +318,22 @@ async function attachPng(page: Page, name = 'diagram.png') {
     mimeType: 'image/png',
     buffer: bytes,
   });
-  await expect(dialog.getByLabel('Шлях у проєкті', { exact: true })).toHaveValue(name);
+  await expect(dialog.getByLabel('Папка', { exact: true })).toHaveValue(directory);
+  await expect(dialog.getByLabel('Назва файла', { exact: true })).toHaveValue(name);
   return bytes;
+}
+
+async function openFileActionMenu(page: Page, path: string, action: string) {
+  const width = await page.evaluate(() => window.innerWidth);
+  if (width <= 720) {
+    const toggle = page.getByRole('button', { name: /(?:Показати|Приховати) файли/ });
+    if ((await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click();
+    await page.getByRole('button', { name: `Дії з файлом: ${path}`, exact: true }).click();
+  } else {
+    await page.getByRole('button', { name: path, exact: true }).click({ button: 'right' });
+  }
+  await page.getByRole('menuitem', { name: action, exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Файли', exact: true })).toHaveCount(0);
 }
 
 async function selectResource(page: Page, path: string) {
@@ -324,6 +348,29 @@ async function selectResource(page: Page, path: string) {
 }
 
 const sourceEditor = (page: Page) => page.getByLabel('Вихідний текст', { exact: true });
+
+test('uploads a resource to the selected file parent with the browser filename by default', async ({
+  page,
+}) => {
+  await installSession(page);
+  const api = await installApi(page);
+  await openWorkspace(page);
+  await selectResource(page, 'chapters/intro.typ');
+  await openResources(page);
+  const dialog = page.getByRole('dialog', { name: 'Завантажити файл', exact: true });
+  await expect(dialog.getByRole('alert')).toHaveCount(0);
+  const bytes = await attachPng(page, 'diagram.png', 'chapters');
+  await dialog.getByRole('button', { name: 'Додати', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect.poll(() => api.postCalls()).toBe(1);
+  expect(api.uploadCalls()).toBe(1);
+  expect(api.bodies[0]!.operations).toEqual([
+    { type: 'attachFile', path: 'chapters/diagram.png', uploadId: 30 },
+  ]);
+  expect(api.server.files.find((file) => file.path === 'chapters/diagram.png')?.bytes).toEqual(
+    bytes,
+  );
+});
 
 test('repeats an uncertain attachment with the same key and without staging the file again', async ({
   page,
@@ -448,7 +495,7 @@ test('keeps an uploaded resource staged until conflict replay is chosen, then do
     { type: 'attachFile', path: 'diagram.png', uploadId: 30 },
   ]);
   expect(api.requestedRevisions).toContain(102);
-  expect(api.server.files.find((file) => file.path === 'diagram.png')?.fileId).toBe(12);
+  expect(api.server.files.find((file) => file.path === 'diagram.png')?.fileId).toBe(13);
   await selectResource(page, 'diagram.png');
   await expect(page.getByRole('button', { name: 'Скачати файл', exact: true })).toBeVisible();
   const downloadPromise = page.waitForEvent('download');
@@ -460,8 +507,8 @@ test('keeps an uploaded resource staged until conflict replay is chosen, then do
   expect(path).not.toBeNull();
   expect(await readFile(path!)).toEqual(originalBytes);
 
-  await page.getByRole('button', { name: 'Дії з файлом: diagram.png', exact: true }).click();
-  await page.getByRole('button', { name: 'Замінити файл', exact: true }).click();
+  await selectResource(page, 'main.typ');
+  await openFileActionMenu(page, 'diagram.png', 'Замінити файл');
   const replaceDialog = page.getByRole('dialog', { name: 'Замінити файл', exact: true });
   const replacementBytes = Buffer.from('replacement-image-bytes');
   await replaceDialog.getByLabel('Вибрати файл', { exact: true }).setInputFiles({
@@ -472,11 +519,9 @@ test('keeps an uploaded resource staged until conflict replay is chosen, then do
   await replaceDialog.getByRole('button', { name: 'Замінити', exact: true }).click();
   await expect(replaceDialog).toHaveCount(0);
   await expect.poll(() => api.postCalls()).toBe(3);
-  await expect(
-    page.getByRole('button', { name: 'Дії з файлом: diagram.png', exact: true }),
-  ).toBeVisible();
-  expect(api.bodies[2]!.operations).toEqual([{ type: 'replaceFile', fileId: 12, uploadId: 31 }]);
-  const replaced = api.server.files.find((file) => file.fileId === 12);
+  await expect(sourceEditor(page)).toBeVisible();
+  expect(api.bodies[2]!.operations).toEqual([{ type: 'replaceFile', fileId: 13, uploadId: 31 }]);
+  const replaced = api.server.files.find((file) => file.fileId === 13);
   expect(replaced?.path).toBe('diagram.png');
   expect(replaced?.bytes).toEqual(replacementBytes);
   expect(api.uploadCalls()).toBe(2);

@@ -451,6 +451,18 @@ test('opens a focused mobile file drawer with folders and handles selection, Esc
   await expect(drawer.getByRole('menu')).toBeHidden();
   await expect(addFile).toBeFocused();
   await expect(drawer).toBeVisible();
+  const mainActions = drawer.getByRole('button', { name: 'Дії з файлом: main.typ' });
+  await mainActions.click();
+  await expect(drawer.getByRole('menuitem', { name: 'Перейменувати файл' })).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await expect(drawer.getByRole('menuitem', { name: 'Видалити файл' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(mainActions).toBeFocused();
+  await expect(drawer.getByRole('menu')).toHaveCount(0);
+  await mainActions.click();
+  await page.keyboard.press('Tab');
+  await expect(drawer.getByRole('menu')).toHaveCount(0);
+  await expect(drawer).toBeVisible();
   await drawer.locator('button').last().focus();
   await page.keyboard.press('Tab');
   await expect(page.getByRole('button', { name: 'Закрити файли', exact: true })).toBeFocused();
@@ -458,20 +470,21 @@ test('opens a focused mobile file drawer with folders and handles selection, Esc
   await expect(drawer).toBeHidden();
   await expect(toggle).toBeFocused();
   await toggle.click();
-  const folder = drawer.getByRole('button', { name: 'chapters', exact: true });
-  await folder.click();
-  await expect(folder).toHaveAttribute('aria-expanded', 'false');
+  await drawer.getByRole('button', { name: 'chapters', exact: true }).click();
+  await expect(drawer.getByRole('button', { name: 'chapters', exact: true })).toHaveAttribute(
+    'aria-current',
+    'true',
+  );
+  await drawer.getByRole('button', { name: 'Згорнути папку: chapters', exact: true }).click();
   await expect(
     drawer.getByRole('button', { name: 'chapters/intro.typ', exact: true }),
   ).toBeHidden();
   await page.keyboard.press('Escape');
   await expect(drawer).toBeHidden();
   await toggle.click();
-  await expect(drawer.getByRole('button', { name: 'chapters', exact: true })).toHaveAttribute(
-    'aria-expanded',
-    'false',
-  );
-  await drawer.getByRole('button', { name: 'chapters', exact: true }).click();
+  const expand = drawer.getByRole('button', { name: 'Розгорнути папку: chapters', exact: true });
+  await expect(expand).toHaveAttribute('aria-expanded', 'false');
+  await expand.click();
   await expect
     .poll(() => drawer.evaluate((element) => getComputedStyle(element).opacity))
     .toBe('1');

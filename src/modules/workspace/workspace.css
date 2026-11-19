@@ -145,11 +145,10 @@
   margin: 0;
   padding: 0 0 12px;
 }
-.workspace-file-list button {
+.workspace-file-tree-button {
   display: flex;
   align-items: center;
   gap: 6px;
-  width: 100%;
   min-height: 34px;
   padding: 6px 12px;
   border: 0;
@@ -160,31 +159,21 @@
   font-size: 13px;
   line-height: 1.4;
 }
-.workspace-file-list button:hover {
+.workspace-file-tree-button:hover {
   background: #edf2f6;
 }
-.workspace-file-list button[aria-current] {
+.workspace-file-tree-button[aria-current] {
   background: #e8f2f6;
   border-left-color: var(--color-primary);
   color: #006884;
 }
-.workspace-file-list button:focus-visible {
+.workspace-file-tree-button:focus-visible {
   outline-offset: -3px;
 }
 .workspace-file-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.file-symbol,
-.file-chevron {
-  width: 16px;
-  height: 16px;
-  flex-shrink: 0;
-  color: var(--color-muted);
-}
-.file-chevron.collapsed {
-  transform: rotate(-90deg);
 }
 .file-dirty {
   flex-shrink: 0;
@@ -430,7 +419,7 @@
   .editor-notice .button {
     min-height: 44px;
   }
-  .workspace-file-list button {
+  .workspace-file-tree-button {
     min-height: 44px;
   }
   .conflict-columns {
@@ -493,50 +482,9 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
-.file-menu-host {
-  position: relative;
-  align-self: center;
-  margin-left: auto;
-  margin-right: 6px;
-  flex-shrink: 0;
-}
-.file-action-list {
-  position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
-  z-index: 20;
-  width: min(230px, calc(100vw - 24px));
-  padding: 4px;
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  background: var(--color-surface);
-  box-shadow: 0 8px 24px #102b4920;
-}
-.file-action-list button {
-  display: block;
-  width: 100%;
-  min-height: 40px;
-  padding: 8px 10px;
-  border: 0;
-  border-radius: 3px;
-  text-align: left;
-  background: transparent;
-  color: var(--color-text);
-  font-size: 13px;
-}
-.file-action-list button:hover,
-.file-action-list button:focus-visible {
-  background: var(--color-background);
-}
-.file-action-list .danger-text {
-  color: #a03036;
-}
 @media (max-width: 720px) {
   .file-icon-button {
     min-width: 44px;
-    min-height: 44px;
-  }
-  .file-action-list button {
     min-height: 44px;
   }
 }

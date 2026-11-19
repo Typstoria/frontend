@@ -2,6 +2,36 @@ import type { Snapshot } from './workspace-api';
 
 type File = Snapshot['tree'][number];
 
+export function parentFolder(path: string): string {
+  const separator = path.lastIndexOf('/');
+  return separator < 0 ? '' : path.slice(0, separator);
+}
+
+export function projectFolders(files: readonly File[]): string[] {
+  const folders = new Set<string>();
+  for (const file of files) {
+    let folder = parentFolder(normalizeFilePath(file.path));
+    while (folder && !folders.has(folder)) {
+      folders.add(folder);
+      folder = parentFolder(folder);
+    }
+  }
+  return [...folders].sort((left, right) => left.localeCompare(right));
+}
+
+export function fileNameError(fileName: string): string {
+  if (!fileName) return 'Вкажіть назву файла.';
+  if (fileName.includes('/') || fileName.includes('\\'))
+    return 'Назва файла не може містити шлях до папки.';
+  return '';
+}
+
+export function filePathInFolder(directory: string, fileName: string): string {
+  const normalizedDirectory = normalizeFilePath(directory);
+  const normalizedFileName = normalizeFilePath(fileName);
+  return normalizedDirectory ? `${normalizedDirectory}/${normalizedFileName}` : normalizedFileName;
+}
+
 export function normalizeFilePath(path: string): string {
   return path.normalize('NFC');
 }

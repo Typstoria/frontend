@@ -259,24 +259,56 @@ async function openNewFileDialog(page: Page) {
   await page.getByRole('button', { name: 'Додати файл', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Створити файл', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Новий файл', exact: true })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Файли', exact: true })).toHaveCount(0);
 }
 
-async function fileMenu(page: Page, path: string, action: string) {
-  await page.getByRole('button', { name: `Дії з файлом: ${path}`, exact: true }).click();
-  await page.getByRole('button', { name: action, exact: true }).click();
+async function fileMenu(page: Page, path: string, action: string, useKeyboard = false) {
+  await showFiles(page);
+  const width = await page.evaluate(() => window.innerWidth);
+  if (width <= 720) {
+    await page.getByRole('button', { name: `Дії з файлом: ${path}`, exact: true }).click();
+  } else {
+    const row = page.getByRole('button', { name: path, exact: true });
+    if (useKeyboard) {
+      await row.focus();
+      await page.keyboard.press('Shift+F10');
+    } else {
+      await row.click({ button: 'right' });
+    }
+  }
+  await page.getByRole('menuitem', { name: action, exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Файли', exact: true })).toHaveCount(0);
   await expect(page.getByRole('dialog')).toBeVisible();
 }
 
 const editor = (page: Page) => page.getByLabel('Вихідний текст', { exact: true });
 
-test('creates a nested text file through the mobile files drawer and reloads it', async ({
-  page,
-}) => {
+test('creates a file in a selected folder and reloads it', async ({ page }) => {
   await installSession(page);
   const api = await installApi(page);
+  api.server.files.push({
+    fileId: 12,
+    path: 'chapters/intro.typ',
+    content: '# Розділ\n',
+    contentKind: 'text',
+    sha256: hash,
+    sizeBytes: 18,
+    mediaType: 'text/plain; charset=utf-8',
+  });
+  api.server.nextFileId = 13;
   await openWorkspace(page);
+  await showFiles(page);
+  await page.getByRole('button', { name: 'Згорнути папку: chapters', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'chapters/intro.typ', exact: true })).toHaveCount(
+    0,
+  );
+  await page.getByRole('button', { name: 'Розгорнути папку: chapters', exact: true }).click();
+  const folder = page.getByRole('button', { name: 'chapters', exact: true });
+  await folder.click();
+  await expect(folder).toHaveAttribute('aria-current', 'true');
   await openNewFileDialog(page);
-  await page.getByLabel('Шлях файла', { exact: true }).fill('chapters/chapter.typ');
+  await expect(page.getByLabel('Папка', { exact: true })).toHaveValue('chapters');
+  await page.getByLabel('Назва файла', { exact: true }).fill('chapter.typ');
   await page.getByRole('button', { name: 'Створити', exact: true }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await showFiles(page);
@@ -305,9 +337,14 @@ test('renames and moves a file while preserving its file ID and content', async 
   await page.getByRole('button', { name: 'notes.typ', exact: true }).click();
   await expect(page.getByRole('dialog', { name: 'Файли', exact: true })).toHaveCount(0);
   await expect(editor(page)).toContainText('Нотатки');
-  await fileMenu(page, 'notes.typ', 'Перейменувати файл');
+  await showFiles(page);
+  await page.getByRole('button', { name: 'main.typ', exact: true }).click();
+  await expect(editor(page)).toContainText('Початок');
+  await fileMenu(page, 'notes.typ', 'Перейменувати файл', true);
   await page.getByLabel('Шлях файла', { exact: true }).fill('reference/notes.typ');
   await page.getByRole('button', { name: 'Перейменувати', exact: true }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(editor(page)).toContainText('Початок');
   await showFiles(page);
   await expect(
     page.getByRole('button', { name: 'reference/notes.typ', exact: true }),
@@ -341,9 +378,10 @@ test('deletes a dirty main file and selects its replacement in one atomic batch'
     { type: 'setEntrypoint', path: 'notes.typ' },
   ]);
   expect(api.server.mainFileId).toBe(11);
-  await expect(
-    page.getByRole('button', { name: 'Дії з файлом: notes.typ', exact: true }),
-  ).toBeVisible();
+  await expect(page.getByRole('button', { name: 'notes.typ', exact: true })).toHaveAttribute(
+    'aria-description',
+    'Головний файл',
+  );
 });
 
 test('locks delete confirmation while the replacement text is loading', async ({ page }) => {
@@ -386,7 +424,8 @@ test('saves existing dirty text and a new file in the same batch', async ({ page
   await editor(page).fill('# Зміна тексту');
   await expect(page.locator('.editor-save-status')).toContainText('Незбережені зміни');
   await openNewFileDialog(page);
-  await page.getByLabel('Шлях файла', { exact: true }).fill('appendix.typ');
+  await expect(page.getByLabel('Папка', { exact: true })).toHaveValue('');
+  await page.getByLabel('Назва файла', { exact: true }).fill('appendix.typ');
   await page.getByRole('button', { name: 'Створити', exact: true }).click();
   expect(api.bodies).toHaveLength(1);
   expect(api.bodies[0]!.operations).toEqual([
@@ -420,7 +459,7 @@ test('retries a lost create response with the identical key and operation before
   });
   await openWorkspace(page);
   await openNewFileDialog(page);
-  await page.getByLabel('Шлях файла', { exact: true }).fill('chapter.typ');
+  await page.getByLabel('Назва файла', { exact: true }).fill('chapter.typ');
   await page.getByRole('button', { name: 'Створити', exact: true }).click();
   const actionDialog = page.getByRole('dialog', { name: 'Новий файл', exact: true });
   await expect(actionDialog.getByRole('button', { name: 'Повторити', exact: true })).toBeVisible();
@@ -442,7 +481,7 @@ test('refreshes the committed tree without issuing a second POST after a failed 
   await openWorkspace(page);
   api.failNextStateRead();
   await openNewFileDialog(page);
-  await page.getByLabel('Шлях файла', { exact: true }).fill('chapter.typ');
+  await page.getByLabel('Назва файла', { exact: true }).fill('chapter.typ');
   await page.getByRole('button', { name: 'Створити', exact: true }).click();
   const actionDialog = page.getByRole('dialog', { name: 'Новий файл', exact: true });
   await expect(actionDialog.getByRole('alert')).toContainText('Зміни збережено');
@@ -468,7 +507,7 @@ test('does not replay a structural action after conflict unless the user checks 
   });
   await openWorkspace(page);
   await openNewFileDialog(page);
-  await page.getByLabel('Шлях файла', { exact: true }).fill('chapter.typ');
+  await page.getByLabel('Назва файла', { exact: true }).fill('chapter.typ');
   await page.getByRole('button', { name: 'Створити', exact: true }).click();
   await page.getByRole('button', { name: 'Порівняти версії', exact: true }).click();
   const replay = page.getByLabel('Повторити дію: Створити chapter.typ', { exact: true });
@@ -500,7 +539,7 @@ test('does not auto-retry a rejected file action after same-account reauthentica
   });
   await openWorkspace(page);
   await openNewFileDialog(page);
-  await page.getByLabel('Шлях файла', { exact: true }).fill('chapter.typ');
+  await page.getByLabel('Назва файла', { exact: true }).fill('chapter.typ');
   await page.getByRole('button', { name: 'Створити', exact: true }).click();
   const actionDialog = page.getByRole('dialog', { name: 'Новий файл', exact: true });
   await expect(actionDialog.getByRole('alert')).toContainText('Забагато запитів');
@@ -523,7 +562,7 @@ test('rejects a colliding path and prevents deleting the only main file', async 
   const api = await installApi(page);
   await openWorkspace(page);
   await openNewFileDialog(page);
-  await page.getByLabel('Шлях файла', { exact: true }).fill('notes.typ');
+  await page.getByLabel('Назва файла', { exact: true }).fill('notes.typ');
   await expect(page.getByRole('button', { name: 'Створити', exact: true })).toBeDisabled();
   await expect(page.getByRole('alert')).toBeVisible();
   expect(api.postCalls()).toBe(0);

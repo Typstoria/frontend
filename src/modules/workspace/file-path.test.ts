@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { filePathError, normalizeFilePath } from './file-path';
+import {
+  filePathError,
+  filePathInFolder,
+  normalizeFilePath,
+  parentFolder,
+  projectFolders,
+} from './file-path';
 import type { Snapshot } from './workspace-api';
 
 const file = (fileId: number, path: string): Snapshot['tree'][number] => ({
@@ -12,6 +18,16 @@ const file = (fileId: number, path: string): Snapshot['tree'][number] => ({
 });
 
 describe('file path validation', () => {
+  it('joins folder and filename and tracks nested folders', () => {
+    expect(filePathInFolder('', 'main.typ')).toBe('main.typ');
+    expect(filePathInFolder('chapters/intro', 'main.typ')).toBe('chapters/intro/main.typ');
+    expect(parentFolder('main.typ')).toBe('');
+    expect(parentFolder('chapters/intro/main.typ')).toBe('chapters/intro');
+    expect(
+      projectFolders([file(1, 'chapters/intro/main.typ'), file(2, 'chapters/outro.typ')]),
+    ).toEqual(['chapters', 'chapters/intro']);
+  });
+
   it('normalizes Unicode to NFC without trimming', () => {
     expect(normalizeFilePath('  cafe\u0301/🧪.typ ')).toBe('  café/🧪.typ ');
     expect(filePathError('  🧪.txt ', [])).toBe('');
