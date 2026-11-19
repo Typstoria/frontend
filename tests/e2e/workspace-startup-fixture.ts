@@ -51,7 +51,14 @@ export async function installWorkspaceStartupMock(
   await page.route('**/api/projects/1/compilations/latest-pdf', (route) =>
     route.fulfill({ json: { job: accepted, revisionNumber } }),
   );
-  await page.route('**/api/projects/1/compilations/900/pdf', (route) =>
+  let nextJobId = 901;
+  await page.route('**/api/projects/1/compilations', (route) =>
+    route.fulfill({
+      status: 202,
+      json: { ...accepted, id: nextJobId++, revisionId: route.request().postDataJSON().revisionId },
+    }),
+  );
+  await page.route(/\/api\/projects\/1\/compilations\/9\d{2}\/pdf$/, (route) =>
     route.fulfill({ contentType: 'application/pdf', body: pdfFixture() }),
   );
 }

@@ -208,7 +208,9 @@ function bearer(route: Route) {
   expect(route.request().url()).not.toContain('workspace-fe3');
 }
 
-test('saves the draft before compiling and shows a protected, continuous PDF', async ({ page }) => {
+test('autosaves a draft before compiling and shows a protected, continuous PDF', async ({
+  page,
+}) => {
   const { server } = await installWorkspace(page);
   const pdf = pdfFixture(700);
   const accepted: number[] = [];
@@ -231,8 +233,16 @@ test('saves the draft before compiling and shows a protected, continuous PDF', a
   await page.goto('/projects/1');
   const editor = page.getByRole('textbox', { name: 'Вихідний текст' });
   await editor.fill('New revision');
-  await page.getByRole('button', { name: 'Скомпілювати', exact: true }).click();
-  await page.getByRole('button', { name: 'Зберегти й скомпілювати' }).click();
+  const compile = page.getByRole('button', { name: 'Скомпілювати', exact: true });
+  await expect(compile).toBeDisabled();
+  await expect.poll(() => accepted).toEqual([101]);
+  const result = page.getByRole('button', { name: 'Лише PDF', exact: true });
+  const split = page.getByRole('button', { name: 'Код і PDF', exact: true });
+  const singlePanel = (await split.count()) === 0;
+  if (singlePanel) {
+    await expect(editor).toBeVisible();
+    await result.click();
+  }
   const frame = page.locator('.pdf-page-frame');
   const firstPage = page.locator('.pdf-page[data-page-number="1"]');
   const secondPage = page.locator('.pdf-page[data-page-number="2"]');
@@ -257,13 +267,11 @@ test('saves the draft before compiling and shows a protected, continuous PDF', a
   const downloaded = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Завантажити PDF' }).click();
   expect(await readFile((await (await downloaded).path())!)).toEqual(pdf);
-  const singlePanel = !(await editor.isVisible());
   if (singlePanel) await page.getByRole('button', { name: 'Лише код', exact: true }).click();
   await editor.fill('Unsaved edits');
-  const result = page.getByRole('button', { name: 'Лише PDF', exact: true });
   if ((await result.getAttribute('aria-pressed')) === 'false') await result.click();
   await expect(page.getByText(/PDF версії 2/)).toBeVisible();
-  if (singlePanel) await expect(page.locator('.pdf-page-indicator')).toHaveText('2 / 2');
+  await expect(page.locator('.pdf-page-indicator')).toHaveText('2 / 2');
 });
 
 test('renders only nearby pages when scrolling through a long PDF', async ({ page }) => {
@@ -418,12 +426,14 @@ test('preserves the PDF page and scroll position when switching to diagnostics',
   await expect.poll(() => frame.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
   await expect(page.locator('.pdf-page-indicator')).toHaveText('2 / 2');
   const scrollTop = await frame.evaluate((element) => element.scrollTop);
-  await page.getByRole('button', { name: 'Діагностика (1)', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Діагностика (1)', exact: true })).toBeFocused();
+  const diagnosticsToggle = page.getByRole('button', { name: 'Діагностика (1)', exact: true });
+  await diagnosticsToggle.click();
+  await expect(diagnosticsToggle).toHaveAttribute('aria-expanded', 'true');
+  await expect(diagnosticsToggle).toBeFocused();
+  const diagnostics = page.getByRole('region', { name: 'Діагностика компіляції' });
+  await expect(diagnostics).toBeVisible();
   await expect(page.getByText('Test warning', { exact: true })).toBeVisible();
-  await expect(page.locator('.pdf-page-indicator')).toBeHidden();
-  await page.getByRole('button', { name: 'PDF', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'PDF', exact: true })).toBeFocused();
+  await expect(frame).toBeVisible();
   await expect(page.locator('.pdf-page-indicator')).toHaveText('2 / 2');
   await expect.poll(() => frame.evaluate((element) => element.scrollTop)).toBe(scrollTop);
 });
@@ -526,23 +536,42 @@ test('keeps warnings visible during a delayed PDF download and its retry', async
   await expect.poll(() => downloads).toBe(2);
   await expect(warning).toBeVisible();
   release();
-  await page.getByRole('button', { name: 'PDF', exact: true }).click();
   await expect(
     page.locator('.pdf-page[data-page-number="1"]').getByLabel('Текст сторінки', { exact: true }),
   ).toContainText('Research report');
-  await page.getByRole('button', { name: 'Діагностика (1)', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Діагностика (1)', exact: true })).toHaveAttribute(
+    'aria-expanded',
+    'true',
+  );
   await expect(warning).toBeVisible();
+
+  await page.route('**/api/projects/1/compilations', (route) =>
+    route.fulfill({ status: 202, json: job(100, 'succeeded', { id: 51 }) }),
+  );
+  await page.route('**/api/projects/1/compilations/51/pdf', (route) =>
+    route.fulfill({ contentType: 'application/pdf', body: pdfFixture() }),
+  );
+  await page.getByRole('button', { name: 'Скомпілювати', exact: true }).click();
+  await expect(page.getByRole('region', { name: 'Діагностика компіляції' })).toContainText(
+    'Немає діагностичних повідомлень.',
+  );
 });
 
 test('opens diagnostics in the source and preserves the editor after a Typst error', async ({
   page,
 }) => {
   await installWorkspace(page);
+  let releaseStatus!: () => void;
+  const statusGate = new Promise<void>((resolve) => (releaseStatus = resolve));
+  let statusSeen!: () => void;
+  const statusStarted = new Promise<void>((resolve) => (statusSeen = resolve));
   await page.route('**/api/projects/1/compilations', (route) =>
     route.fulfill({ status: 202, json: job(100, 'queued') }),
   );
-  await page.route('**/api/projects/1/compilations/50', (route) =>
-    route.fulfill({
+  await page.route('**/api/projects/1/compilations/50', async (route) => {
+    statusSeen();
+    await statusGate;
+    return route.fulfill({
       json: job(100, 'failed', {
         errorCode: 'TYPST_ERROR',
         diagnostics: [
@@ -555,15 +584,21 @@ test('opens diagnostics in the source and preserves the editor after a Typst err
           },
         ],
       }),
-    }),
-  );
+    });
+  });
   await page.goto('/projects/1');
   await page.getByRole('button', { name: 'Скомпілювати', exact: true }).click();
+  await statusStarted;
+  await page.getByRole('button', { name: 'Лише код', exact: true }).click();
+  releaseStatus();
   await expect(page.getByText('unclosed delimiter')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'PDF', exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Діагностика (1)', exact: true }).click();
+  await expect(page.getByRole('textbox', { name: 'Вихідний текст' })).toBeVisible();
+  const diagnosticsToggle = page.getByRole('button', { name: 'Діагностика (1)', exact: true });
+  await expect(diagnosticsToggle).toHaveAttribute('aria-expanded', 'true');
+  const diagnostics = page.getByRole('region', { name: 'Діагностика компіляції' });
+  await expect(diagnostics).toBeVisible();
   await page
-    .getByRole('region', { name: 'Результат компіляції' })
+    .getByRole('region', { name: 'Діагностика компіляції' })
     .getByRole('button', { name: 'main.typ', exact: true })
     .click();
   await expect(page.getByRole('textbox', { name: 'Вихідний текст' })).toContainText('Original');
@@ -635,7 +670,7 @@ test('retries an ambiguous restore with the same key and reloads cached source',
   expect(server.saveCount).toBe(0);
 });
 
-test('waits for an in-flight autosave and saves newer edits before compiling', async ({ page }) => {
+test('waits for an in-flight autosave and compiles the latest saved edit', async ({ page }) => {
   const { server, text } = await installWorkspace(page);
   let allowFirst!: () => void;
   const release = new Promise<void>((resolve) => {
@@ -660,13 +695,148 @@ test('waits for an in-flight autosave and saves newer edits before compiling', a
   await editor.press('Control+s');
   await first;
   await editor.fill('Second edit');
-  await page.getByRole('button', { name: 'Скомпілювати', exact: true }).click();
-  await page.getByRole('button', { name: 'Зберегти й скомпілювати' }).click();
+  await expect(page.getByRole('button', { name: 'Скомпілювати', exact: true })).toBeDisabled();
   allowFirst();
   await expect(
     page.getByText('Не вдалося скомпілювати документ. Спробуйте пізніше.'),
   ).toBeVisible();
   expect(server.saveCount).toBe(2);
+});
+
+test('does not compile a saved revision twice when startup already picks it up', async ({
+  page,
+}) => {
+  const { server } = await installWorkspace(page);
+  let releaseLatest!: () => void;
+  const latestGate = new Promise<void>((resolve) => (releaseLatest = resolve));
+  let starts = 0;
+  await page.route('**/api/projects/1/compilations/latest-pdf', async (route) => {
+    await latestGate;
+    await route.fulfill({ json: { job: null, revisionNumber: null } });
+  });
+  await page.route('**/api/projects/1/compilations/ensure', (route) => {
+    expect(server.head).toBe(101);
+    return route.fulfill({ json: { job: job(101, 'succeeded'), revisionNumber: 2 } });
+  });
+  await page.route('**/api/projects/1/compilations/50/pdf', (route) =>
+    route.fulfill({ contentType: 'application/pdf', body: pdfFixture(700, 2, 'Saved on startup') }),
+  );
+  await page.route('**/api/projects/1/compilations', (route) => {
+    starts++;
+    return route.fulfill({ status: 503, json: {} });
+  });
+  await page.goto('/projects/1');
+  const editor = page.getByRole('textbox', { name: 'Вихідний текст' });
+  const saved = page.waitForResponse((response) => response.url().endsWith('/changes'));
+  await editor.fill('Edited while finding the last PDF');
+  await saved;
+  releaseLatest();
+  if (!(await page.locator('#workspace-output').isVisible()))
+    await page.getByRole('button', { name: 'Лише PDF', exact: true }).click();
+  await expect(
+    page.locator('.pdf-page[data-page-number="1"]').getByLabel('Текст сторінки'),
+  ).toContainText('Saved on startup');
+  await expect(page.getByRole('button', { name: 'Скомпілювати', exact: true })).toBeEnabled();
+  expect(starts).toBe(0);
+});
+
+test('coalesces saved revisions during an active compile and keeps the previous PDF on error', async ({
+  page,
+}) => {
+  const { server, text } = await installWorkspace(page);
+  const accepted: number[] = [];
+  let releaseFirstStatus!: () => void;
+  const firstStatusGate = new Promise<void>((resolve) => (releaseFirstStatus = resolve));
+  let firstStatusSeen!: () => void;
+  const firstStatusStarted = new Promise<void>((resolve) => (firstStatusSeen = resolve));
+  await page.route('**/api/projects/1/compilations', (route) => {
+    const { revisionId } = route.request().postDataJSON();
+    accepted.push(revisionId);
+    return route.fulfill({
+      status: 202,
+      json: job(revisionId, 'queued', { id: 49 + accepted.length }),
+    });
+  });
+  await page.route('**/api/projects/1/compilations/50', async (route) => {
+    firstStatusSeen();
+    await firstStatusGate;
+    return route.fulfill({ json: job(101, 'succeeded', { id: 50 }) });
+  });
+  await page.route('**/api/projects/1/compilations/50/pdf', (route) =>
+    route.fulfill({
+      contentType: 'application/pdf',
+      body: pdfFixture(700, 2, 'Compiled revision two'),
+    }),
+  );
+  await page.route('**/api/projects/1/compilations/51', (route) =>
+    route.fulfill({
+      json: job(103, 'failed', {
+        id: 51,
+        errorCode: 'TYPST_ERROR',
+        diagnostics: [
+          {
+            fileId: 10,
+            path: 'main.typ',
+            severity: 'error',
+            message: 'latest revision failed',
+            range: null,
+          },
+        ],
+      }),
+    }),
+  );
+  await page.route('**/api/projects/1/compilations/52', (route) =>
+    route.fulfill({ json: job(104, 'succeeded', { id: 52 }) }),
+  );
+  await page.route('**/api/projects/1/compilations/52/pdf', (route) =>
+    route.fulfill({
+      contentType: 'application/pdf',
+      body: pdfFixture(700, 2, 'Corrected report'),
+    }),
+  );
+  await page.goto('/projects/1');
+  const editor = page.getByRole('textbox', { name: 'Вихідний текст' });
+  await editor.fill('First saved edit');
+  await firstStatusStarted;
+
+  const saveNow = async (content: string, count: number) => {
+    await editor.fill(content);
+    const saved = page.waitForRequest((request) => request.url().endsWith('/changes'));
+    await editor.press('Control+s');
+    await saved;
+    await expect.poll(() => server.saveCount).toBe(count);
+  };
+  await saveNow('Second saved edit', 2);
+  await saveNow('Third saved edit', 3);
+  expect(text.get(103)).toBe('Third saved edit');
+  expect(accepted).toEqual([101]);
+
+  if (!(await page.locator('#workspace-output').isVisible())) {
+    await expect(editor).toBeVisible();
+    await page.getByRole('button', { name: 'Лише PDF', exact: true }).click();
+  }
+  releaseFirstStatus();
+  await expect(
+    page.locator('.pdf-page[data-page-number="1"]').getByLabel('Текст сторінки'),
+  ).toContainText('Compiled revision two');
+  await expect.poll(() => accepted).toEqual([101, 103]);
+  await expect(page.getByText('latest revision failed', { exact: true })).toBeVisible();
+  await expect(page.getByText('PDF версії 2.', { exact: true })).toBeVisible();
+  await expect(
+    page.locator('.pdf-page[data-page-number="1"]').getByLabel('Текст сторінки'),
+  ).toContainText('Compiled revision two');
+
+  const diagnostics = page.getByRole('region', { name: 'Діагностика компіляції' });
+  await diagnostics.getByRole('button', { name: 'main.typ', exact: true }).click();
+  await expect(editor).toBeVisible();
+  await saveNow('Corrected source', 4);
+  if (!(await page.locator('#workspace-output').isVisible()))
+    await page.getByRole('button', { name: 'Лише PDF', exact: true }).click();
+  await expect(diagnostics).toBeHidden();
+  await expect(
+    page.locator('.pdf-page[data-page-number="1"]').getByLabel('Текст сторінки'),
+  ).toContainText('Corrected report');
+  expect(accepted).toEqual([101, 103, 104]);
 });
 
 test('refreshes on a concurrent restore conflict and asks for a new confirmation', async ({
@@ -717,7 +887,7 @@ test('refreshes on a concurrent restore conflict and asks for a new confirmation
   expect(expectedHeads).toEqual([101, 102]);
 });
 
-test('compiles the selected saved revision and handles an expired PDF without downloading', async ({
+test('manually recompiles the clean current revision when its PDF has expired', async ({
   page,
 }) => {
   const { server } = await installWorkspace(page);
@@ -738,14 +908,13 @@ test('compiles the selected saved revision and handles an expired PDF without do
     return route.abort();
   });
   await page.goto('/projects/1');
-  const editor = page.getByRole('textbox', { name: 'Вихідний текст' });
-  await editor.fill('Pending edit');
-  await page.getByRole('button', { name: 'Скомпілювати', exact: true }).click();
-  await page.getByRole('button', { name: 'Скомпілювати версію 1', exact: true }).click();
+  const compile = page.getByRole('button', { name: 'Скомпілювати', exact: true });
+  await expect(compile).toBeEnabled();
+  await compile.click();
   await expect(
     page.getByText('PDF більше недоступний. Скомпілюйте документ ще раз.'),
   ).toBeVisible();
   expect(accepted).toEqual([100]);
   expect(downloads).toBe(0);
-  await expect.poll(() => server.saveCount).toBe(1);
+  expect(server.saveCount).toBe(0);
 });

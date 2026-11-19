@@ -1,12 +1,23 @@
 import { reactive } from 'vue';
 import { ApiError } from '../../shared/api/client';
-import type { Compilation, CompilationApi } from './compilation-api';
+import type { Compilation, CompilationApi, Diagnostic } from './compilation-api';
 import { workspaceError } from './workspace-model';
 
 type Revision = { id: number; number: number };
 type Artifact = { job: Compilation; revision: Revision; pdf: Blob };
 type Retry = 'status' | 'pdf' | 'startup' | null;
+type DiagnosticResult = {
+  jobId: number;
+  revisionId: number;
+  revisionNumber: number;
+  items: Diagnostic[];
+};
 const activeJob = (job: Compilation) => job.status === 'queued' || job.status === 'running';
+export const compilationRetryLabels = {
+  status: 'Перевірити статус',
+  pdf: 'Повторити завантаження',
+  startup: 'Повторити',
+};
 
 export function compilationFailure(job: Compilation) {
   if (job.status === 'timed_out') return 'Компіляція тривала задовго. Спробуйте ще раз.';
@@ -29,6 +40,7 @@ export function createCompilationModel(api: CompilationApi) {
     job: null as Compilation | null,
     revision: null as Revision | null,
     artifact: null as Artifact | null,
+    diagnostics: null as DiagnosticResult | null,
     busy: false,
     error: '',
     retry: null as Retry,
@@ -86,7 +98,8 @@ export function createCompilationModel(api: CompilationApi) {
         onUnavailable?.();
         return;
       }
-      setArtifact({ job, revision, pdf });
+      if (!state.artifact || state.artifact.revision.number <= revision.number)
+        setArtifact({ job, revision, pdf });
     } catch (error) {
       if (signal.aborted) return;
       if (error instanceof ApiError && error.code === 'ARTIFACT_UNAVAILABLE') {
@@ -131,8 +144,26 @@ export function createCompilationModel(api: CompilationApi) {
     if (activeJob(job)) {
       state.error = 'Компіляція ще триває. Статус можна перевірити знову.';
       state.retry = 'status';
-    } else if (job.status === 'succeeded') await fetchPdf(job, revision, signal, onUnavailable);
-    else state.error = compilationFailure(job);
+      return;
+    }
+    if (state.diagnostics?.jobId !== job.id) {
+      const items = [...job.diagnostics];
+      if (job.status !== 'succeeded' && !items.some((item) => item.severity === 'error'))
+        items.unshift({
+          severity: 'error',
+          message: compilationFailure(job),
+          fileId: null,
+          path: null,
+          range: null,
+        });
+      state.diagnostics = {
+        jobId: job.id,
+        revisionId: revision.id,
+        revisionNumber: revision.number,
+        items,
+      };
+    }
+    if (job.status === 'succeeded') await fetchPdf(job, revision, signal, onUnavailable);
   }
 
   async function run(action: (signal: AbortSignal) => Promise<void>) {
@@ -152,6 +183,7 @@ export function createCompilationModel(api: CompilationApi) {
   }
 
   async function start(revision: Revision) {
+    if (state.busy || disposed) return;
     state.revision = revision;
     state.job = null;
     await run(async (signal) => {
@@ -213,7 +245,7 @@ export function createCompilationModel(api: CompilationApi) {
 
   async function retry() {
     const { job, revision, retry } = state;
-    if (!retry || state.busy) return;
+    if (!retry || state.busy || disposed) return;
     if (retry === 'startup') return openStartup();
     if (!job || !revision) return;
     await run((signal) =>

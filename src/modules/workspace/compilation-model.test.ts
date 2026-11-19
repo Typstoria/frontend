@@ -69,7 +69,7 @@ it('only ensures after an explicit empty latest response and stops on a terminal
 
   expect(api.ensure).toHaveBeenCalledTimes(1);
   expect(api.status).toHaveBeenCalledTimes(1);
-  expect(model.state.error).toContain('Typst');
+  expect(model.state.diagnostics?.items[0]?.message).toContain('Typst');
   expect(model.state.retry).toBeNull();
 });
 
@@ -149,4 +149,14 @@ it('does not interpret a PDF storage outage as absence', async () => {
   expect(api.latestPdf).toHaveBeenCalledTimes(1);
   expect(api.ensure).not.toHaveBeenCalled();
   expect(model.state.retry).toBe('pdf');
+});
+
+it('keeps a newer PDF when a compilation finishes for an older revision', async () => {
+  const oldJob = { ...job(), id: 8, revisionId: 9 };
+  const { model } = fixture({ start: vi.fn(async () => oldJob) });
+  models.push(model);
+  await model.openStartup();
+  const artifact = model.state.artifact;
+  await model.start({ id: 9, number: 2 });
+  expect(model.state.artifact).toBe(artifact);
 });

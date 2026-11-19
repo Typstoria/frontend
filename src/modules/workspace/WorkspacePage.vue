@@ -29,9 +29,10 @@ import type { ProjectUpload, StructureChange } from './workspace-api';
 import { ApiError } from '../../shared/api/client';
 import { matchesResourceType } from './resource-formats';
 import { createCompilationApi, type Diagnostic } from './compilation-api';
-import { createCompilationModel } from './compilation-model';
+import { compilationRetryLabels, createCompilationModel } from './compilation-model';
 import { createHistoryApi } from './history-api';
 import WorkspaceOutput from './WorkspaceOutput.vue';
+import WorkspaceDiagnostics from './WorkspaceDiagnostics.vue';
 import FileAddMenu from './FileAddMenu.vue';
 import { openPdfTab } from './pdf-tab';
 import './workspace.css';
@@ -71,26 +72,27 @@ const compilation = createCompilationModel(
 );
 const compileStatus = computed(() => {
   const output = compilation.state;
-  if (output.busy) return output.artifact ? 'Оновлення PDF…' : 'Підготовка PDF…';
-  if (output.error) {
-    if (output.retry === 'status') return 'Статус невідомий';
-    if (output.job?.status === 'succeeded') return 'PDF недоступний';
-    if (output.job?.status === 'cancelled') return 'Скасовано';
-    return 'Компіляція не вдалася';
-  }
-  return '';
+  return output.artifact ? 'Оновлення PDF…' : 'Підготовка PDF…';
 });
 type ViewMode = 'code' | 'split' | 'preview';
 const splitQuery = window.matchMedia('(min-width: 1024px)');
 const canSplit = ref(splitQuery.matches);
 const viewMode = ref<ViewMode>(canSplit.value ? 'split' : 'code');
 const pdfOpenError = ref('');
-const savingForCompile = ref(false);
-const compileChoice = ref<{ id: number; number: number } | null>(null);
-const compileError = ref('');
 const restoreLocked = computed(() => restoring.value || !!restoreAttempt.value);
 let workspaceLoaded = false;
-let startupAttempted = false;
+const startupAttempted = ref(false);
+let handledCompilationRevision = 0;
+const canCompile = computed(
+  () =>
+    startupAttempted.value &&
+    !historyOpen.value &&
+    !restoreLocked.value &&
+    state.status === 'clean' &&
+    !atRisk.value &&
+    !compilation.state.busy &&
+    compilation.state.retry !== 'status',
+);
 const resourceApi = createResourceApi(identitySession.request);
 const resourceController = new AbortController();
 const contextOpen = ref(false);
@@ -178,7 +180,6 @@ async function retryRestore() {
 
 watch(historyOpen, (open) => {
   if (open) {
-    compileChoice.value = null;
     mobileFilesVisible.value = false;
     fileMenuOpen.value = false;
     if (resourceAction.value && !resourceBusy.value && !state.pending) dismissResource();
@@ -190,63 +191,31 @@ watch(historyOpen, (open) => {
   }
 });
 
-function requestCompile() {
-  const revision = state.snapshot?.revision;
-  if (!revision || compilation.state.busy || savingForCompile.value) return;
-  compileError.value = '';
-  if (atRisk.value || state.status !== 'clean')
-    compileChoice.value = { id: revision.id, number: revision.number };
-  else startCompilation(revision);
-}
-
 function startCompilation(revision: { id: number; number: number }) {
-  if (compilation.state.busy || restoreLocked.value) return;
-  if (effectiveViewMode.value === 'code') viewMode.value = canSplit.value ? 'split' : 'preview';
+  handledCompilationRevision = state.compilationRevision;
   pdfOpenError.value = '';
-  compileChoice.value = null;
-  compileError.value = '';
   void compilation.start({ id: revision.id, number: revision.number });
 }
 
-function compileSavedVersion() {
-  if (compileChoice.value && !savingForCompile.value) startCompilation(compileChoice.value);
+function requestCompile() {
+  const revision = state.snapshot?.revision;
+  if (!revision || !canCompile.value) return;
+  if (effectiveViewMode.value === 'code') viewMode.value = canSplit.value ? 'split' : 'preview';
+  startCompilation(revision);
 }
 
-async function saveAndCompile() {
-  if (
-    !compileChoice.value ||
-    savingForCompile.value ||
-    compilation.state.busy ||
-    restoreLocked.value
-  )
+watch([() => state.compilationRevision, () => state.status, canCompile], () => {
+  if (state.status === 'conflict') handledCompilationRevision = state.compilationRevision;
+  if (!canCompile.value || state.compilationRevision === handledCompilationRevision) return;
+  const revision = state.snapshot?.revision;
+  if (!revision) return;
+  // Startup can already have picked up this save while looking for the first PDF.
+  if (compilation.state.job?.revisionId === revision.id) {
+    handledCompilationRevision = state.compilationRevision;
     return;
-  compileChoice.value = null;
-  savingForCompile.value = true;
-  try {
-    if (state.pending) {
-      await model.save();
-      if (restoreController.signal.aborted) return;
-      if (state.pending || state.saveError) {
-        compileError.value = 'Спочатку збережіть зміни, а тоді повторіть компіляцію.';
-        return;
-      }
-    }
-    const before = state.snapshot?.revision.id;
-    await model.save();
-    if (restoreController.signal.aborted) return;
-    if (
-      state.snapshot &&
-      !state.pending &&
-      !state.saveError &&
-      (state.status === 'clean' ||
-        (state.status === 'dirty' && state.snapshot.revision.id !== before))
-    )
-      startCompilation(state.snapshot.revision);
-    else compileError.value = 'Спочатку збережіть зміни, а тоді повторіть компіляцію.';
-  } finally {
-    savingForCompile.value = false;
   }
-}
+  startCompilation(revision);
+});
 
 async function toggleContext() {
   contextOpen.value = !contextOpen.value;
@@ -497,18 +466,18 @@ const showOutput = computed(() => effectiveViewMode.value !== 'code');
 function splitChanged(event: MediaQueryListEvent) {
   canSplit.value = event.matches;
 }
-function canOpenDiagnostic(item: Diagnostic) {
+function canOpenDiagnostic(item: Diagnostic, revisionId: number) {
   return (
     !!item.path &&
-    compilation.state.job?.revisionId === state.snapshot?.revision.id &&
+    revisionId === state.snapshot?.revision.id &&
     !!state.snapshot?.tree.some(
       (file) =>
         file.fileId === item.fileId && file.path === item.path && file.contentKind === 'text',
     )
   );
 }
-async function openDiagnostic(item: Diagnostic) {
-  if (item.fileId === null || !canOpenDiagnostic(item)) return;
+async function openDiagnostic(item: Diagnostic, revisionId: number) {
+  if (item.fileId === null || !canOpenDiagnostic(item, revisionId)) return;
   await selectFile(item.fileId);
   await nextTick();
   editor.value?.focus();
@@ -647,8 +616,8 @@ function downloadBlob(blob: Blob, filename: string) {
 }
 function initializeWorkspaceOutput() {
   if (historyOpen.value) return;
-  if (!startupAttempted) {
-    startupAttempted = true;
+  if (!startupAttempted.value) {
+    startupAttempted.value = true;
     void compilation.openStartup();
   }
 }
@@ -758,16 +727,26 @@ onBeforeUnmount(() => {
         </div>
         <div v-if="!historyOpen && !state.conflict" class="workspace-command-bar">
           <button
-            class="button button-primary compile-command"
-            :disabled="
-              restoreLocked ||
-              compilation.state.busy ||
-              savingForCompile ||
-              state.status === 'conflict'
-            "
+            type="button"
+            class="file-icon-button"
+            title="Скомпілювати"
+            aria-label="Скомпілювати"
+            :disabled="!canCompile"
             @click="requestCompile"
           >
-            {{ savingForCompile ? 'Збереження…' : 'Скомпілювати' }}
+            <svg
+              viewBox="0 0 20 20"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              aria-hidden="true"
+            >
+              <path
+                d="M16 8a6 6 0 1 0 0 4m0-8v4h-4"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
           </button>
           <div class="workspace-view-modes" role="group" aria-label="Вигляд редактора">
             <button
@@ -829,7 +808,7 @@ onBeforeUnmount(() => {
             </button>
           </div>
           <span
-            v-if="!showOutput && compileStatus"
+            v-if="!showOutput && compilation.state.busy"
             class="workspace-compile-status"
             role="status"
             >{{ compileStatus }}</span
@@ -839,9 +818,20 @@ onBeforeUnmount(() => {
       <p v-if="pdfOpenError && !historyOpen" class="editor-notice" role="alert">
         {{ pdfOpenError }}
       </p>
-      <p v-if="compileError && !historyOpen" class="editor-notice" role="alert">
-        {{ compileError }}
-      </p>
+      <div
+        v-if="!showOutput && !historyOpen && !state.conflict && compilation.state.error"
+        class="editor-notice"
+      >
+        <p role="alert">{{ compilation.state.error }}</p>
+        <button
+          v-if="compilation.state.retry"
+          type="button"
+          class="button button-secondary"
+          @click="compilation.retry"
+        >
+          {{ compilationRetryLabels[compilation.state.retry] }}
+        </button>
+      </div>
       <div
         v-if="restoreError || restoring"
         class="editor-notice"
@@ -1164,13 +1154,18 @@ onBeforeUnmount(() => {
           :output="compilation.state"
           :head-id="state.snapshot.revision.id"
           :unsaved="atRisk"
-          :can-open-file="canOpenDiagnostic"
           @retry="compilation.retry"
-          @source="openDiagnostic"
           @download="downloadPdf"
           @open="openPdf"
         />
       </div>
+      <WorkspaceDiagnostics
+        v-if="!state.conflict"
+        v-show="!historyOpen"
+        :result="compilation.state.diagnostics"
+        :can-open-file="canOpenDiagnostic"
+        @source="openDiagnostic"
+      />
       <div class="mobile-files-modal">
         <ModalDialog
           :open="isMobile && mobileFilesVisible && !state.conflict"
@@ -1238,26 +1233,6 @@ onBeforeUnmount(() => {
         @dismiss="dismissResource"
         @closed="resourceClosed"
       />
-      <ModalDialog
-        :open="!!compileChoice"
-        title="Скомпілювати документ"
-        @dismiss="compileChoice = null"
-      >
-        <p>У редакторі є зміни. Яку версію скомпілювати?</p>
-        <div class="editor-actions compile-options">
-          <button
-            class="button button-primary"
-            :disabled="state.status === 'conflict'"
-            @click="saveAndCompile"
-          >
-            Зберегти й скомпілювати
-          </button>
-          <button v-if="compileChoice" class="button button-secondary" @click="compileSavedVersion">
-            Скомпілювати версію {{ compileChoice.number }}
-          </button>
-          <button class="button button-quiet" @click="compileChoice = null">Скасувати</button>
-        </div>
-      </ModalDialog>
     </template>
   </section>
 </template>

@@ -605,10 +605,6 @@
   padding: 4px 10px;
   font-size: 13px;
 }
-.output-modes button[aria-pressed='true'] {
-  background: #e8f2f6;
-  color: #006884;
-}
 .editor-layout.editor-with-output {
   grid-template-columns: 240px minmax(0, 1fr) minmax(0, 0.88fr);
 }
@@ -637,18 +633,10 @@
   border-bottom: 1px solid var(--color-border);
   background: #f8fafc;
 }
-.output-modes {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-}
-.output-modes h2 {
+.output-heading h2 {
   margin: 0 5px;
   font-size: 13px;
   font-weight: 600;
-}
-.output-heading .output-download {
-  margin-left: auto;
 }
 .output-notice {
   display: flex;
@@ -680,50 +668,6 @@
   color: var(--color-muted);
   font-size: 13px;
 }
-.output-diagnostics {
-  min-height: 0;
-  overflow: auto;
-}
-.output-diagnostics ul {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-.output-diagnostics li {
-  padding: 7px 12px 9px;
-  border-bottom: 1px solid var(--color-border);
-  overflow-wrap: anywhere;
-}
-.output-diagnostics li p {
-  margin: 3px 0 0;
-  font-size: 13px;
-}
-.diagnostic-severity {
-  margin-right: 8px;
-  color: #8b520c;
-  font-size: 12px;
-}
-.output-diagnostics .error .diagnostic-severity {
-  color: #9d302e;
-}
-.diagnostic-link,
-.diagnostic-path {
-  color: var(--color-muted);
-  font: 12px var(--font-code);
-}
-.diagnostic-link {
-  min-height: 34px;
-  padding: 0 4px;
-  border: 0;
-  background: transparent;
-  color: #006884;
-  text-align: left;
-  text-decoration: underline;
-  overflow-wrap: anywhere;
-}
-.compile-options {
-  justify-content: flex-end;
-}
 @media (max-width: 720px) {
   .editor-heading-commands {
     flex-wrap: wrap;
@@ -742,14 +686,8 @@
     margin-left: auto;
   }
   .workspace-command-bar .button,
-  .output-heading .button,
-  .diagnostic-link,
-  .compile-options .button {
+  .output-heading .button {
     min-height: 44px;
-  }
-  .compile-options {
-    align-items: stretch;
-    flex-direction: column;
   }
 }
 

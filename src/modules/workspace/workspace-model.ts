@@ -74,6 +74,7 @@ export function createWorkspaceModel(projectId: number, api: WorkspaceApi, delay
     saveError: '',
     status: 'clean' as SaveStatus,
     pending: null as Attempt | null,
+    compilationRevision: 0,
     structure: [] as StructureChange[],
     structureLabels: [] as string[],
     conflict: null as Conflict | null,
@@ -331,6 +332,11 @@ export function createWorkspaceModel(projectId: number, api: WorkspaceApi, delay
       state.structureLabels = [];
       state.pending = null;
       state.status = dirty.value ? 'dirty' : 'clean';
+      if (
+        result.revisionId !== attempt.body.baseRevisionId &&
+        attempt.body.operations.some((operation) => operation.type !== 'updateContext')
+      )
+        state.compilationRevision = result.revisionId;
       const newFile = attempt.selectPath
         ? state.snapshot.tree.find((file) => file.path === attempt.selectPath)
         : undefined;

@@ -70,6 +70,24 @@ function deferred<T>() {
 }
 
 describe('workspace autosave', () => {
+  it('queues compilation only after a changed source revision is confirmed', async () => {
+    const { model, api, state } = fixture();
+    await model.load();
+    model.editContext('New context');
+    await model.save();
+    expect(state.snapshot?.revision.id).toBe(11);
+    expect(state.compilationRevision).toBe(0);
+
+    model.edit(1, 'Edited source');
+    vi.mocked(api.save).mockRejectedValueOnce(new TypeError('Connection lost'));
+    await model.save();
+    expect(state.status).toBe('outcome_unknown');
+    expect(state.compilationRevision).toBe(0);
+    vi.mocked(api.save).mockResolvedValueOnce(result(12));
+    await model.save();
+    expect(state.compilationRevision).toBe(12);
+  });
+
   it('keeps a newer context draft when an atomic context and text save finishes', async () => {
     const { model, api, state } = fixture();
     await model.load();
