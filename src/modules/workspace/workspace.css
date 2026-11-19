@@ -214,6 +214,37 @@
   min-width: 0;
   min-height: 0;
 }
+.editor-empty {
+  display: grid;
+  flex: 1;
+  min-height: 0;
+  padding: 20px;
+  overflow: auto;
+  place-items: safe center;
+  background: #f8fafc;
+  text-align: center;
+}
+.editor-empty-content h2 {
+  margin: 0 0 14px;
+  font-size: 16px;
+  font-weight: 600;
+}
+.editor-empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+}
+.editor-empty-actions .button {
+  min-height: 40px;
+  padding: 6px 12px;
+  font-size: 13px;
+}
+@media (max-width: 720px) {
+  .editor-empty-actions .button {
+    min-height: 44px;
+  }
+}
 .editor-source .text-editor {
   flex: 1;
   min-height: 0;

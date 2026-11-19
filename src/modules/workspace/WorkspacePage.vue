@@ -537,6 +537,7 @@ const filesVisible = computed({
   },
 });
 const editor = ref<InstanceType<typeof TextEditor> | null>(null);
+const emptyMainFileAction = ref<HTMLButtonElement | null>(null);
 const dirtyIds = computed(() =>
   Object.entries(state.files)
     .filter(([, file]) => file.base !== file.content)
@@ -595,7 +596,7 @@ function retainTabs(remaining: TabId[], replacement?: number) {
   if (focusWasInTabs)
     void nextTick(() => {
       const target = document.getElementById(`workspace-tab-${activeTab.value}`);
-      (target ?? document.querySelector<HTMLElement>('.editor-files-toggle'))?.focus();
+      (target ?? emptyMainFileAction.value)?.focus({ preventScroll: true });
     });
 }
 
@@ -639,6 +640,20 @@ async function selectFile(fileId: number) {
   if (activeTab.value !== fileId) return;
   if (isMobile.value) mobileFilesVisible.value = false;
   else await nextTick(() => editor.value?.focus());
+}
+async function openMainFile() {
+  const id = state.snapshot?.mainFileId;
+  if (id === undefined) return;
+  await selectFile(id);
+  if (isMobile.value && activeTab.value === id)
+    document.getElementById(`workspace-tab-${id}`)?.focus({ preventScroll: true });
+}
+async function showFilesFromEmptyEditor() {
+  filesVisible.value = true;
+  if (!isMobile.value) {
+    await nextTick();
+    document.querySelector<HTMLElement>('#workspace-files .workspace-file-list button')?.focus();
+  }
 }
 const selectedMeta = computed(() =>
   state.snapshot?.tree.find((f) => f.fileId === state.selectedId),
@@ -1110,7 +1125,7 @@ onBeforeUnmount(() => {
           />
         </aside>
         <section v-show="!onlyOutput" class="editor-source" aria-label="Редактор файла">
-          <div class="editor-file-bar">
+          <div v-if="activeTab !== null" class="editor-file-bar">
             <WorkspaceTabs
               :tabs="tabs"
               :active-id="activeTab"
@@ -1198,7 +1213,30 @@ onBeforeUnmount(() => {
                 @blur="model.composition(false)"
               />
             </section>
-            <p v-if="activeTab === null" class="editor-file-message">Виберіть файл у дереві.</p>
+            <div v-if="activeTab === null" class="editor-empty">
+              <div class="editor-empty-content">
+                <h2>Немає відкритих файлів</h2>
+                <div class="editor-empty-actions">
+                  <button
+                    ref="emptyMainFileAction"
+                    type="button"
+                    class="button button-secondary"
+                    @click="openMainFile"
+                  >
+                    Відкрити головний файл
+                  </button>
+                  <button
+                    v-if="isMobile || !filesVisible"
+                    type="button"
+                    class="button button-quiet"
+                    :aria-haspopup="isMobile ? 'dialog' : undefined"
+                    @click="showFilesFromEmptyEditor"
+                  >
+                    Вибрати файл
+                  </button>
+                </div>
+              </div>
+            </div>
             <p
               v-else-if="hasFileTab && state.fileLoading"
               role="status"

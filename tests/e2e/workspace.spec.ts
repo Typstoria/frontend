@@ -396,6 +396,20 @@ test('keeps one context tab and preserves a closed file draft and undo history',
   await page.getByRole('menuitem', { name: 'Закрити всі', exact: true }).click();
   await expect(tabs.getByRole('tab')).toHaveCount(0);
   await expect(editor).toBeHidden();
+  await expect(page.getByRole('heading', { name: 'Немає відкритих файлів' })).toBeVisible();
+  const mainAction = page.getByRole('button', { name: 'Відкрити головний файл' });
+  await expect(mainAction).toBeFocused();
+  const tree = page.getByRole('complementary', { name: 'Файли проєкту' });
+  if (await tree.isVisible()) await page.getByRole('button', { name: 'Приховати файли' }).click();
+  await page.getByRole('button', { name: 'Вибрати файл', exact: true }).click();
+  const drawer = page.getByRole('dialog', { name: 'Файли', exact: true });
+  if (await page.evaluate(() => matchMedia('(max-width: 720px)').matches)) {
+    await expect(drawer).toBeVisible();
+    await drawer.getByRole('button', { name: 'Закрити файли' }).click();
+    await expect(drawer).toBeHidden();
+  } else await expect(tree).toBeVisible();
+  await mainAction.click();
+  await expect(editor).toContainText('# Початок');
   await selectFile(page, 'notes.typ');
   await expect(editor).toContainText('Нотатки');
 });
