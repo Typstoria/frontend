@@ -61,6 +61,7 @@ import {
 import './workspace.css';
 
 const WorkspaceHistory = defineAsyncComponent(() => import('./WorkspaceHistory.vue'));
+const WorkspaceReview = defineAsyncComponent(() => import('../review/WorkspaceReview.vue'));
 const route = useRoute();
 const router = useRouter();
 const projectId = Number(route.params.projectId);
@@ -75,6 +76,35 @@ const model = createWorkspaceModel(projectId, workspaceApi);
 const { state, atRisk } = model;
 const workspacePath = `/projects/${projectId}`;
 const historyOpen = computed(() => route.params.workspaceView === 'history');
+const reviewOpen = computed(() => route.params.workspaceView === 'proposals');
+const reviewBusy = ref(false);
+const reviewRevisionToRefresh = ref<number | null>(null);
+const reviewRefreshing = ref(false);
+const reviewRevisionToCompile = ref<number | null>(null);
+function closeReview() {
+  if (reviewBusy.value) return;
+  if (router.options.history.state.back === workspacePath) router.back();
+  else void router.replace(workspacePath);
+}
+async function refreshAfterReview(revisionNumber: number) {
+  reviewRevisionToRefresh.value = revisionNumber;
+  reviewRefreshing.value = true;
+  try {
+    const previous = state.snapshot?.revision.id;
+    const head = await model.refreshHead();
+    if (!head || head.revision.number < revisionNumber)
+      throw new Error('Accepted revision unavailable');
+    if (head.revision.id !== previous) reviewRevisionToCompile.value = head.revision.id;
+    reviewRevisionToRefresh.value = null;
+  } finally {
+    reviewRefreshing.value = false;
+  }
+}
+function retryReviewRefresh() {
+  const revision = reviewRevisionToRefresh.value;
+  if (revision !== null && !reviewRefreshing.value)
+    void refreshAfterReview(revision).catch(() => {});
+}
 const historyApi = createHistoryApi(identitySession.request);
 const restoreController = new AbortController();
 const recoveredRestore = takeWorkspaceRestore(ownerId, projectId);
@@ -126,6 +156,8 @@ const canCompile = computed(
   () =>
     startupAttempted.value &&
     !historyOpen.value &&
+    !reviewOpen.value &&
+    reviewRevisionToRefresh.value === null &&
     !restoreLocked.value &&
     state.status === 'clean' &&
     !atRisk.value &&
@@ -269,6 +301,14 @@ function requestCompile() {
 }
 
 watch([() => state.compilationRevision, () => state.status, canCompile], () => {
+  const reviewed = state.snapshot?.revision;
+  if (reviewRevisionToCompile.value !== null && canCompile.value) {
+    reviewRevisionToCompile.value = null;
+    if (reviewed && compilation.state.job?.revisionId !== reviewed.id) {
+      startCompilation(reviewed);
+      return;
+    }
+  }
   if (state.status === 'conflict') handledCompilationRevision = state.compilationRevision;
   if (!canCompile.value || state.compilationRevision === handledCompilationRevision) return;
   const revision = state.snapshot?.revision;
@@ -365,6 +405,7 @@ const menuGroups = computed<WorkspaceMainMenuGroup[]>(() => [
     items: [
       { id: 'context', label: 'Контекст' },
       { id: 'history', label: 'Історія версій' },
+      { id: 'proposals', label: 'ШІ-пропозиції' },
       {
         id: 'rename-project',
         label: 'Перейменувати проєкт…',
@@ -406,6 +447,7 @@ function runWorkspaceCommand(id: string, trigger: HTMLElement) {
   else if (id === 'reset-layout') resetLayout();
   else if (id === 'context') void openContext();
   else if (id === 'history') void router.push(`${workspacePath}/history`);
+  else if (id === 'proposals') void router.push(`${workspacePath}/proposals`);
   else if (id === 'rename-project' || id === 'delete-project') {
     projectTitle.value = state.snapshot?.project.title ?? '';
     projectTitleError.value = '';
@@ -616,6 +658,7 @@ let deferredFileAction: FileAction | null = null;
 const actionsDisabled = computed(
   () =>
     state.loading ||
+    reviewRevisionToRefresh.value !== null ||
     restoreLocked.value ||
     state.fileLoading ||
     state.conflictLoading ||
@@ -1013,12 +1056,6 @@ function revealFolder(directory: string) {
     (path) => directory !== path && !inFolder(directory, path),
   );
 }
-function selectRoot(event: MouseEvent) {
-  treeSelection.value = null;
-  (event.currentTarget as HTMLElement).parentElement
-    ?.querySelector<HTMLElement>('.file-add-menu-host button')
-    ?.focus({ preventScroll: true });
-}
 function toggleFolder(path: string) {
   if (
     inlineName.value &&
@@ -1283,9 +1320,10 @@ const labels = {
 };
 let leaving = false;
 const workspaceAtRisk = computed(
-  () => atRisk.value || resourceUploading.value || restoreLocked.value,
+  () => atRisk.value || resourceUploading.value || restoreLocked.value || reviewBusy.value,
 );
 function allowLeave() {
+  if (reviewBusy.value) return false;
   if (!workspaceAtRisk.value || leaving) return true;
   const confirmed = window.confirm(
     restoreLocked.value
@@ -1305,10 +1343,11 @@ watch(
   { immediate: true },
 );
 onBeforeRouteLeave(() => !identitySession.user.value || allowLeave());
-onBeforeRouteUpdate(
-  (to, from) =>
-    to.params.projectId === from.params.projectId || !identitySession.user.value || allowLeave(),
-);
+onBeforeRouteUpdate((to, from) => {
+  if (!identitySession.user.value) return true;
+  if (reviewBusy.value) return false;
+  return to.params.projectId === from.params.projectId || allowLeave();
+});
 function beforeUnload(event: BeforeUnloadEvent) {
   if (!workspaceAtRisk.value) return;
   event.preventDefault();
@@ -1347,7 +1386,7 @@ function downloadBlob(blob: Blob, filename: string) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 function initializeWorkspaceOutput() {
-  if (historyOpen.value) return;
+  if (historyOpen.value || reviewOpen.value) return;
   if (!startupAttempted.value) {
     startupAttempted.value = true;
     void compilation.openStartup();
@@ -1373,6 +1412,10 @@ async function loadWorkspace() {
   initializeWorkspaceOutput();
   if (historyOpen.value) void refreshHistoryHead();
 }
+watch(reviewOpen, (open) => {
+  if (open) mobileFilesVisible.value = false;
+  else if (workspaceLoaded) initializeWorkspaceOutput();
+});
 onMounted(() => {
   mobileQuery.addEventListener('change', viewportChanged);
   splitQuery.addEventListener('change', splitChanged);
@@ -1428,6 +1471,11 @@ onBeforeUnmount(() => {
           </svg>
         </button>
         <h1 :title="state.snapshot.project.title">{{ state.snapshot.project.title }}</h1>
+        <WorkspaceMainMenu
+          v-if="!isMobile && !state.conflict"
+          :groups="menuGroups"
+          @command="runWorkspaceCommand"
+        />
         <div class="editor-heading-tools">
           <span
             role="status"
@@ -1464,6 +1512,7 @@ onBeforeUnmount(() => {
           </RouterLink>
         </div>
         <div v-if="!state.conflict" class="workspace-command-bar">
+          <WorkspaceMainMenu v-if="isMobile" :groups="menuGroups" @command="runWorkspaceCommand" />
           <button
             type="button"
             class="file-icon-button"
@@ -1552,8 +1601,14 @@ onBeforeUnmount(() => {
             role="status"
             >{{ compileStatus }}</span
           >
-          <WorkspaceMainMenu :groups="menuGroups" @command="runWorkspaceCommand" />
         </div>
+      </div>
+      <div v-if="reviewRevisionToRefresh !== null && !reviewOpen" class="editor-notice">
+        <p v-if="reviewRefreshing" role="status">Оновлення файлів редактора…</p>
+        <template v-else>
+          <p role="alert">Пропозицію прийнято. Не вдалося оновити файли редактора.</p>
+          <button class="button button-secondary" @click="retryReviewRefresh">Оновити файли</button>
+        </template>
       </div>
       <p v-if="pdfOpenError && !historyOpen" class="editor-notice" role="alert">
         {{ pdfOpenError }}
@@ -1706,6 +1761,22 @@ onBeforeUnmount(() => {
           <button class="button button-secondary" @click="downloadCopy">Завантажити копію</button>
         </div>
       </section>
+      <WorkspaceReview
+        v-if="reviewOpen"
+        :project-id="projectId"
+        :head-id="state.snapshot.revision.id"
+        :head-number="state.snapshot.revision.number"
+        :can-decide="
+          state.status === 'clean' &&
+          !atRisk &&
+          !resourceBusy &&
+          !restoreLocked &&
+          reviewRevisionToRefresh === null
+        "
+        :refresh-accepted="refreshAfterReview"
+        @busy="reviewBusy = $event"
+        @dismiss="closeReview"
+      />
       <WorkspaceHistory
         v-if="historyOpen && !state.conflict"
         :project-id="projectId"
@@ -1746,19 +1817,10 @@ onBeforeUnmount(() => {
           id="workspace-files"
           class="editor-files"
           aria-label="Файли проєкту"
+          @click.self="treeSelection = null"
         >
           <div class="editor-files-heading">
             <h2>Файли</h2>
-            <button
-              v-if="creationDirectory && !inlineName"
-              class="editor-files-root"
-              type="button"
-              aria-label="Вибрати корінь проєкту"
-              title="Вибрати корінь проєкту"
-              @click="selectRoot"
-            >
-              Корінь
-            </button>
             <FileAddMenu
               :disabled="actionsDisabled"
               :upload-disabled="state.status === 'saving'"
@@ -1782,6 +1844,8 @@ onBeforeUnmount(() => {
             :drop-disabled="treeDropDisabled"
             :mobile="false"
             v-bind="inlineEdit ? { inlineEdit } : {}"
+            @click.self="treeSelection = null"
+            @keydown.esc="treeSelection = null"
             @toggle="toggleFolder"
             @select="selectTreeFile"
             @select-folder="treeSelection = $event"
@@ -1837,7 +1901,9 @@ onBeforeUnmount(() => {
                 id="project-context-input"
                 ref="contextInput"
                 :value="state.contextText"
-                :readonly="state.conflictLoading || restoreLocked"
+                :readonly="
+                  state.conflictLoading || restoreLocked || reviewRevisionToRefresh !== null
+                "
                 placeholder="Вимоги, домовленості та примітки до документа"
                 @input="model.editContext(($event.target as HTMLTextAreaElement).value)"
                 @keydown.ctrl.s.prevent="model.save()"
@@ -1912,6 +1978,7 @@ onBeforeUnmount(() => {
               :reset-key="state.resetKey"
               :readonly="
                 restoreLocked ||
+                reviewRevisionToRefresh !== null ||
                 state.conflictLoading ||
                 state.structure.some(
                   (operation) =>

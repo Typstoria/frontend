@@ -16,7 +16,7 @@ export const router = createRouter({
       meta: { title: 'Проєкти', requiresAuth: true },
     },
     {
-      path: '/projects/:projectId([1-9][0-9]{0,9})/:workspaceView(history)?',
+      path: '/projects/:projectId([1-9][0-9]{0,9})/:workspaceView(history|proposals)?/:proposalId([1-9][0-9]{0,9})?',
       component: () => import('../modules/workspace/WorkspacePage.vue'),
       meta: { title: 'Редактор', requiresAuth: true, workspaceLayout: true },
     },
@@ -55,6 +55,7 @@ export const router = createRouter({
 });
 
 router.beforeEach((to) => {
+  if (to.params.proposalId && to.params.workspaceView !== 'proposals') return '/404';
   const authenticated = identitySession.isAuthenticated();
   if (to.meta.requiresAuth && !authenticated) {
     const returnTo = safeReturnTo(to.path);
@@ -77,13 +78,19 @@ router.afterEach(async (to, from) => {
     'reset-password': 'Новий пароль',
     'forgot-password': 'Відновлення доступу',
   };
-  const title = to.params.workspaceView === 'history' ? 'Історія версій' : to.meta.title;
+  const title =
+    to.params.workspaceView === 'history'
+      ? 'Історія версій'
+      : to.params.workspaceView === 'proposals'
+        ? 'ШІ-пропозиції'
+        : to.meta.title;
   document.title = `${titles[String(to.params.flow)] ?? String(title ?? 'Документи')} · Typstoria`;
   if (
     to.meta.workspaceLayout &&
     from.meta.workspaceLayout &&
     to.params.projectId === from.params.projectId &&
-    to.params.workspaceView !== from.params.workspaceView
+    (to.params.workspaceView !== from.params.workspaceView ||
+      to.params.proposalId !== from.params.proposalId)
   )
     return;
   await nextTick();

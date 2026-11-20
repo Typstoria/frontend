@@ -456,21 +456,6 @@
   font-size: 12px;
   color: var(--color-muted);
 }
-.editor-files-root {
-  margin-left: auto;
-  min-height: 30px;
-  padding: 3px 8px;
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--color-muted);
-  font: inherit;
-  font-size: 12px;
-}
-.editor-files-root:hover {
-  background: #e8f2f6;
-  color: var(--color-text);
-}
 .file-icon-button {
   display: inline-flex;
   align-items: center;
@@ -558,6 +543,10 @@
 
 .workspace-history-link {
   flex-shrink: 0;
+}
+.editor-heading > .workspace-main-menu {
+  flex-shrink: 0;
+  margin-inline-start: 8px;
 }
 .workspace-command-bar {
   display: flex;
@@ -670,9 +659,6 @@
     margin-inline: -8px -12px;
     border-top: 1px solid var(--color-border);
   }
-  .workspace-command-bar .workspace-main-menu {
-    margin-inline-start: auto;
-  }
   .workspace-compile-status {
     margin-left: auto;
   }
@@ -713,5 +699,39 @@
   }
   .mobile-files-modal .file-add-menu-host.drawer-add {
     top: 6px;
+  }
+}
+
+.modal-dialog.history-modal[open] {
+  display: flex;
+  flex-direction: column;
+  width: min(1120px, calc(100vw - 48px));
+  height: min(820px, calc(100dvh - 48px));
+  max-height: calc(100dvh - 48px);
+  padding: 0;
+  overflow: hidden;
+}
+.history-modal > h2 {
+  display: flex;
+  align-items: center;
+  flex: 0 0 56px;
+  margin: 0;
+  padding: 0 56px 0 20px;
+  border-bottom: 1px solid var(--color-border);
+  font-size: 16px;
+}
+@media (max-width: 720px) {
+  .modal-dialog.history-modal[open] {
+    width: 100vw;
+    height: 100dvh;
+    max-width: none;
+    max-height: none;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+  }
+  .history-modal > h2 {
+    flex-basis: 52px;
+    padding-left: 16px;
   }
 }

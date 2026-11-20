@@ -1088,24 +1088,6 @@ onBeforeUnmount(() => {
   max-width: 430px;
   line-height: 1.55;
 }
-:global(.modal-dialog.history-modal[open]) {
-  display: flex;
-  flex-direction: column;
-  width: min(1120px, calc(100vw - 48px));
-  height: min(820px, calc(100dvh - 48px));
-  max-height: calc(100dvh - 48px);
-  padding: 0;
-  overflow: hidden;
-}
-:global(.history-modal > h2) {
-  display: flex;
-  align-items: center;
-  flex: 0 0 56px;
-  margin: 0;
-  padding: 0 56px 0 20px;
-  border-bottom: 1px solid var(--color-border);
-  font-size: 16px;
-}
 .history-close {
   position: absolute;
   z-index: 1;
@@ -1119,19 +1101,6 @@ onBeforeUnmount(() => {
   padding: 0;
 }
 @media (max-width: 720px) {
-  :global(.modal-dialog.history-modal[open]) {
-    width: 100vw;
-    height: 100dvh;
-    max-width: none;
-    max-height: none;
-    margin: 0;
-    border: 0;
-    border-radius: 0;
-  }
-  :global(.history-modal > h2) {
-    flex-basis: 52px;
-    padding-left: 16px;
-  }
   .workspace-history {
     display: flex;
     flex-direction: column;

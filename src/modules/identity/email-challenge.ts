@@ -12,9 +12,13 @@ export function takeEmailChallenge(
 export function safeReturnTo(value: unknown): string {
   // Only known private destinations. Never forward credentials, fragments or external URLs.
   if (value === '/settings/account') return value;
-  if (typeof value === 'string' && /^\/projects\/[1-9][0-9]{0,9}(\/history)?$/.test(value)) {
-    const id = Number(value.split('/')[2]);
-    if (id <= 2147483647) return value;
+  if (typeof value === 'string') {
+    const route =
+      /^\/projects\/([1-9][0-9]{0,9})(?:\/history|\/proposals(?:\/([1-9][0-9]{0,9}))?)?$/.exec(
+        value,
+      );
+    if (route && Number(route[1]) <= 2147483647 && (!route[2] || Number(route[2]) <= 2147483647))
+      return value;
   }
   return '/projects';
 }

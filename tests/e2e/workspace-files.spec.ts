@@ -386,6 +386,46 @@ test('creates a file in a selected folder and reloads it', async ({ page }) => {
   ).toBeVisible();
 });
 
+test('creates in the root by clearing the tree selection or choosing it in the folder picker', async ({
+  page,
+}) => {
+  await installSession(page);
+  const api = await installApi(page);
+  api.server.directories.push('chapters');
+  api.server.directoryVersions.set(100, ['chapters']);
+  await openWorkspace(page);
+  await showFiles(page);
+  const folder = page.getByRole('button', { name: 'chapters', exact: true });
+  await folder.click();
+  await expect(folder).toHaveAttribute('aria-current', 'true');
+
+  const mobile = await mobileLayout(page);
+  if (!mobile) {
+    const sidebar = page.getByRole('complementary', { name: 'Файли проєкту' });
+    const bounds = (await sidebar.boundingBox())!;
+    await sidebar.click({ position: { x: 20, y: bounds.height - 20 } });
+    await expect(folder).not.toHaveAttribute('aria-current', 'true');
+    await folder.click();
+    await folder.press('Escape');
+    await expect(folder).not.toHaveAttribute('aria-current', 'true');
+  }
+
+  await openNewFileDialog(page);
+  if (mobile) {
+    const picker = page.getByLabel('Папка', { exact: true });
+    await expect(picker).toHaveValue('chapters');
+    await picker.selectOption('');
+  }
+  await page.getByLabel('Назва файла', { exact: true }).fill('overview.typ');
+  await submitNewFile(page);
+  await expect(page.getByLabel('Назва файла', { exact: true })).toHaveCount(0);
+  await showFiles(page);
+  await expect(page.getByRole('button', { name: 'overview.typ', exact: true })).toBeVisible();
+  expect(api.bodies[0]!.operations).toEqual([
+    { type: 'createFile', path: 'overview.typ', content: '' },
+  ]);
+});
+
 test('renames and moves a file while preserving its file ID and content', async ({ page }) => {
   await installSession(page);
   const api = await installApi(page);

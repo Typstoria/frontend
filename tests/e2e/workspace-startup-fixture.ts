@@ -3,7 +3,7 @@ import type { Page } from '@playwright/test';
 const hash = 'a'.repeat(64);
 const createdAt = '2026-11-12T10:30:00Z';
 
-function pdfFixture() {
+export function pdfFixture() {
   const stream = 'BT /F1 18 Tf 20 30 Td (Startup PDF) Tj ET';
   const objects = [
     '<< /Type /Catalog /Pages 2 0 R >>',
