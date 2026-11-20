@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import ModalDialog from '../../shared/ui/ModalDialog.vue';
 import PasswordField from './PasswordField.vue';
+import OAuthConnections from './OAuthConnections.vue';
 import { identitySession } from './identity-session';
 import { describeAuthError } from './auth-errors';
 import type { Account } from './identity-api';
@@ -194,6 +195,7 @@ onBeforeUnmount(() => {
         String(cooldown % 60).padStart(2, '0')
       }}.
     </p>
+    <OAuthConnections />
 
     <ModalDialog
       :open="dialogOpen"

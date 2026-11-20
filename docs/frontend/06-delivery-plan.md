@@ -11,7 +11,7 @@
 | FE2a — projects        | Реалізовано CRUD приватних проєктів, pagination та повтор створення                 | Backend P2 є; сценарії та перевірки — у [11](11-projects.md)             |
 | FE2b — files/save      | Редактор, автозбереження, керування файлами, контекст та ресурси реалізовано        | Backend P2/OpenAPI; конкурентне збереження не втрачає текст              |
 | FE3 — PDF/history      | Компіляція, приватний PDF, діагностика та історія реалізовані. SSE очікує API       | Backend P3; old job не замінює новий результат, restore створює версію   |
-| FE4 — review/access    | Proposal lifecycle, candidate PDF, accept/reject/stale, PAT та consent/revoke       | P4/P5 і Bearer consent contract; користувач підтверджує точний candidate |
+| FE4 — review/access    | Proposal lifecycle, candidate PDF, accept/reject/stale, OAuth consent/revoke        | P4/P5 і Bearer consent contract; користувач підтверджує точний candidate |
 | FE5 — повний workspace | Матеріали/annotations, templates/shares, ZIP, LSP/outline, GitHub backup            | P6–P8 і editor/WS spike; усі функціональні групи з 01 покриті            |
 | FE6 — release          | Browser/accessibility/performance, deployment, integration matrix                   | Backend P9 + наскрізні сценарії, документація фактичних обмежень         |
 
@@ -26,7 +26,7 @@
 | FT03 | Typst error зберігає draft; compile out of order, unsaved source, stale/expired PDF                                       | F05, N02, N03             |
 | FT04 | Усі proposal operations видимі; candidate changed/stale, validation failure, explicit compile-error accept, повтор accept | F10, N01, N02             |
 | FT05 | History/binary diff/restore; annotations на rename/delete; матеріал без витягу                                            | F03, F09, F12, F13        |
-| FT06 | PAT one-time secret, least privilege/project grants, consent deny/revoke, реальний MCP → web review                       | F06, F07, F19, N04        |
+| FT06 | OAuth project grants, consent deny/revoke, реальний MCP → web review                                                      | F06, F07, F19, N04        |
 | FT07 | Template share/revoke/copy, explicit inclusion, ZIP round trip/entrypoint required, GitHub conflict/retry                 | F14, F15, F17, F18        |
 | FT08 | UTF-16 (українська, emoji), IME, completion/format/undo/definition; outline partial/stale                                 | F11, F16                  |
 | FT09 | Offline/reconnect, expired access під час save, другий акаунт не бачить cache/drafts; cleanup streams/workers             | N01, N04, N05             |

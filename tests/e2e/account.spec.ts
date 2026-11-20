@@ -38,6 +38,98 @@ test.beforeEach(async ({ page }) => {
     }),
   );
   await page.route('**/api/auth/me', (route) => route.fulfill({ json: user }));
+  await page.route('**/api/access/oauth', (route) =>
+    route.fulfill({ json: { enabled: false, url: null } }),
+  );
+});
+
+test('hides application settings when OAuth is unavailable', async ({ page }) => {
+  const capability = page.waitForResponse((response) =>
+    response.url().endsWith('/api/access/oauth'),
+  );
+  await signIn(page);
+  await capability;
+  await expect(page.getByRole('heading', { name: 'Підключення застосунків' })).toHaveCount(0);
+});
+
+test('copies the OAuth address and revokes a connection after confirmation', async ({
+  page,
+}, testInfo) => {
+  const url = 'https://api.typstoria.example/mcp';
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'clipboard', {
+      value: {
+        writeText: (value: string) => {
+          document.documentElement.dataset.copiedAddress = value;
+          return Promise.resolve();
+        },
+      },
+    });
+  });
+  await page.route('**/api/access/oauth', (route) =>
+    route.fulfill({ json: { enabled: true, url } }),
+  );
+  let status = 'active';
+  let connected = false;
+  let revokeCalls = 0;
+  await page.route('**/api/access/connections?*', (route) =>
+    route.fulfill({
+      json: {
+        items: connected
+          ? [
+              {
+                id: 41,
+                name: 'Асистент редактора',
+                clientId: 'oauth-public-client',
+                scopes: ['documents:read', 'changes:propose'],
+                projectIds: [7],
+                projects: [{ id: 7, title: 'Курсова робота' }],
+                status,
+                createdAt: '2026-11-12T09:00:00Z',
+                expiresAt: '2026-12-12T09:00:00Z',
+                revokedAt: status === 'revoked' ? '2026-11-19T09:00:00Z' : null,
+              },
+            ]
+          : [],
+        nextCursor: null,
+      },
+    }),
+  );
+  await page.route('**/api/access/connections/41', (route) => {
+    expect(route.request().method()).toBe('DELETE');
+    expect(route.request().headers().authorization).toBe('Bearer 1.account-test');
+    revokeCalls++;
+    if (revokeCalls === 1) return route.fulfill({ status: 503, json: {} });
+    status = 'revoked';
+    return route.fulfill({ status: 204 });
+  });
+  await signIn(page);
+  const heading = page.getByRole('heading', { name: 'Підключення застосунків' });
+  await expect(heading).toBeVisible();
+  await expect(page.getByText('Підключених застосунків поки немає.')).toBeVisible();
+  connected = true;
+  await page.getByRole('button', { name: 'Оновити', exact: true }).click();
+  const connection = page.getByRole('article', { name: 'Асистент редактора' });
+  await expect(connection).toContainText('Підключено');
+  await connection.getByText('Переглянути дозволи', { exact: true }).click();
+  await expect(connection.getByText('Курсова робота', { exact: true })).toBeVisible();
+  await expect(connection.getByText('Створення пропозицій змін', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Адреса для підключення')).toHaveValue(url);
+  await page.getByRole('button', { name: 'Скопіювати адресу', exact: true }).click();
+  await expect(page.locator('html')).toHaveAttribute('data-copied-address', url);
+  await page.screenshot({ path: testInfo.outputPath('oauth-connections.png'), fullPage: true });
+  await page.getByRole('button', { name: 'Відкликати доступ · Асистент редактора' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Відкликати доступ до застосунку?' });
+  await dialog.getByRole('button', { name: 'Скасувати', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(revokeCalls).toBe(0);
+  await page.getByRole('button', { name: 'Відкликати доступ · Асистент редактора' }).click();
+  await dialog.getByRole('button', { name: 'Відкликати доступ', exact: true }).click();
+  await expect(dialog.getByRole('alert')).toContainText('Не вдалося відкликати доступ');
+  await dialog.getByRole('button', { name: 'Відкликати доступ', exact: true }).click();
+  await expect(connection).toContainText('Відкликано');
+  await expect(connection.getByRole('button', { name: /Відкликати доступ/ })).toHaveCount(0);
+  expect(revokeCalls).toBe(2);
 });
 
 test('edits a name and prevents clearing, preserves input on failure, and leaves email read-only', async ({

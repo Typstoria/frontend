@@ -1,35 +1,17 @@
 /** Generated TypeScript types from backend OpenAPI. Run npm run api:types; do not edit manually. */
 export interface paths {
-  '/api/access/tokens': {
+  '/api/access/oauth': {
     parameters: {
       query?: never;
       header?: never;
       path?: never;
       cookie?: never;
     };
-    /** List PAT metadata. Secrets are never returned. */
-    get: operations['AccessController_tokens'];
-    put?: never;
-    /** Create a project-scoped MCP token. Copy the secret from this response; it is shown once. */
-    post: operations['AccessController_create'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/api/access/tokens/{id}': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
+    /** Return the public MCP address when OAuth is configured. */
+    get: operations['AccessController_availability'];
     put?: never;
     post?: never;
-    /** Revoke a PAT. It stops working on the next MCP request. */
-    delete: operations['AccessController_revokeToken'];
+    delete?: never;
     options?: never;
     head?: never;
     patch?: never;
@@ -877,66 +859,18 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
   schemas: {
-    CreatePatDto: {
-      /** @example Local MCP client */
-      name: string;
-      /**
-       * @description Only these active projects will be accessible to this token.
-       * @example [
-       *       1
-       *     ]
-       */
-      projectIds: number[];
-      /**
-       * @example [
-       *       "projects:read",
-       *       "documents:read"
-       *     ]
-       */
-      scopes: (
-        | 'projects:read'
-        | 'documents:read'
-        | 'context:read'
-        | 'history:read'
-        | 'changes:read'
-        | 'changes:propose'
-        | 'uploads:stage'
-        | 'compile:run'
-        | 'compile:read'
-      )[];
-      /** @default 30 */
-      expiresInDays: number;
+    OAuthAvailabilityDto: {
+      /** Format: uri */
+      url: string | null;
+      enabled: boolean;
     };
-    CreatedPatDto: {
+    ConnectionProjectDto: {
       /**
        * Format: int32
        * @example 1
        */
       id: number;
-      scopes: (
-        | 'projects:read'
-        | 'documents:read'
-        | 'context:read'
-        | 'history:read'
-        | 'changes:read'
-        | 'changes:propose'
-        | 'uploads:stage'
-        | 'compile:run'
-        | 'compile:read'
-      )[];
-      projectIds: number[];
-      clientId: string | null;
-      /** @enum {string} */
-      status: 'active' | 'expired' | 'revoked';
-      /** Format: date-time */
-      createdAt: string;
-      /** Format: date-time */
-      expiresAt: string;
-      /** Format: date-time */
-      revokedAt: string | null;
-      /** @description Copy now; this secret cannot be retrieved again. Use it only with /mcp. */
-      token: string;
-      name: string;
+      title: string;
     };
     AccessGrantDto: {
       /**
@@ -966,6 +900,7 @@ export interface components {
       /** Format: date-time */
       revokedAt: string | null;
       name: string;
+      projects: components['schemas']['ConnectionProjectDto'][];
     };
     AccessGrantListDto: {
       /**
@@ -2007,16 +1942,9 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
-  AccessController_tokens: {
+  AccessController_availability: {
     parameters: {
-      query?: {
-        /** @description Last project ID from the previous page; projects are ordered by ID descending. */
-        cursor?: number;
-        /** @description Number of projects per page. */
-        limit?: number;
-        /** @description Optional case-insensitive title substring; surrounding whitespace is ignored. */
-        search?: string;
-      };
+      query?: never;
       header?: never;
       path?: never;
       cookie?: never;
@@ -2028,62 +1956,8 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['AccessGrantListDto'];
+          'application/json': components['schemas']['OAuthAvailabilityDto'];
         };
-      };
-    };
-  };
-  AccessController_create: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        'application/json': components['schemas']['CreatePatDto'];
-      };
-    };
-    responses: {
-      201: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['CreatedPatDto'];
-        };
-      };
-      /** @description A selected project does not belong to this account or was deleted. */
-      404: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-      /** @description Rate limit or active credential limit. */
-      429: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-    };
-  };
-  AccessController_revokeToken: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      204: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
       };
     };
   };

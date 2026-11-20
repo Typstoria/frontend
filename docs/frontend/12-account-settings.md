@@ -20,6 +20,10 @@ Token — одноразовий email proof, тому фінальна стор
 
 Backend атомарно прибирає акаунт і owned DB records та блокує доступ до файлів/PDF. Фізичні immutable bytes/repos/backups потребують окремої GC/retention policy; HTTP не обіцяє негайного стирання всіх копій. Деталі — [backend account settings](https://github.com/Typstoria/backend/blob/main/docs/backend/18-account-settings.md).
 
+## Підключення застосунків
+
+Коли на сервері доступний MCP через OAuth, у налаштуваннях можна скопіювати адресу підключення, переглянути застосунки та їхні дозволи й відкликати доступ. Для нового підключення адресу додають у MCP-клієнті, а доступ до проєктів підтверджують у браузері.
+
 ## Базовий діалог
 
 `ModalDialog.vue` завжди змонтований, видимість керується `open`; `v-if` на самому компоненті не використовувати. Native dialog відкривається в Transition enter hook. Вхід/вихід — opacity й зміщення на 6 px зі слабким scale, 160 ms; backdrop теж згасає. За `prefers-reduced-motion: reduce` transitions/animations вимкнені.

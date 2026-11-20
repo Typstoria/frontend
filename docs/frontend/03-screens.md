@@ -4,18 +4,18 @@
 
 ## 1. Карта екранів
 
-| Екран                     | Цільовий маршрут                             | Основні дії                                                            |
-| ------------------------- | -------------------------------------------- | ---------------------------------------------------------------------- |
-| Вхід/реєстрація           | `/auth/login`, `/auth/register`              | Email/password, Google, verify/resend guidance                         |
-| Посилання з листів        | `/auth/verify-email`, `/auth/reset-password` | Явне підтвердження або новий пароль                                    |
-| Відновлення               | `/auth/forgot-password`                      | Generic відповідь, cooldown                                            |
-| Проєкти                   | `/projects`                                  | Пошук, створення, шаблон, імпорт, rename/delete                        |
-| Робочий простір           | `/projects/:projectId`                       | Файли, текст, PDF, контекст, структура, annotations                    |
-| Пропозиція                | `/projects/:projectId/proposals/:proposalId` | Diff, validation, candidate PDF, accept/reject                         |
-| Історія                   | `/projects/:projectId/history`               | Read-only версія, diff, restore як нова версія                         |
-| Шаблони                   | `/templates`, `/shared/templates/:token`     | Вибір, незалежна копія, обмежений share snapshot                       |
-| Доступи й обліковий запис | `/settings/access`, `/settings/account`      | PAT/OAuth grants, revoke; ім’я, пошта, зміна пароля, видалення акаунта |
-| Backup                    | `/projects/:projectId/settings/backup`       | GitHub repo/branch, склад копії, status/retry                          |
+| Екран                     | Цільовий маршрут                             | Основні дії                                                                    |
+| ------------------------- | -------------------------------------------- | ------------------------------------------------------------------------------ |
+| Вхід/реєстрація           | `/auth/login`, `/auth/register`              | Email/password, Google, verify/resend guidance                                 |
+| Посилання з листів        | `/auth/verify-email`, `/auth/reset-password` | Явне підтвердження або новий пароль                                            |
+| Відновлення               | `/auth/forgot-password`                      | Generic відповідь, cooldown                                                    |
+| Проєкти                   | `/projects`                                  | Пошук, створення, шаблон, імпорт, rename/delete                                |
+| Робочий простір           | `/projects/:projectId`                       | Файли, текст, PDF, контекст, структура, annotations                            |
+| Пропозиція                | `/projects/:projectId/proposals/:proposalId` | Diff, validation, candidate PDF, accept/reject                                 |
+| Історія                   | `/projects/:projectId/history`               | Read-only версія, diff, restore як нова версія                                 |
+| Шаблони                   | `/templates`, `/shared/templates/:token`     | Вибір, незалежна копія, обмежений share snapshot                               |
+| Доступи й обліковий запис | `/settings/account`                          | OAuth-підключення та відкликання; ім’я, пошта, зміна пароля, видалення акаунта |
+| Backup                    | `/projects/:projectId/settings/backup`       | GitHub repo/branch, склад копії, status/retry                                  |
 
 OAuth consent route має визначити backend authorization flow; не вигадуємо робочий URL наперед. Експорт і upload progress можуть бути панелями, окрема сторінка для кожного job не потрібна.
 
