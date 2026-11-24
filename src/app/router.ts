@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router';
 import { nextTick } from 'vue';
+import { SHARED_TEMPLATE_PATH, shareToken } from '../modules/templates/share-navigation';
 import { identitySession } from '../modules/identity/identity-session';
 import { captureInitialChallenge, safeReturnTo } from '../modules/identity/email-challenge';
 
@@ -19,6 +20,16 @@ export const router = createRouter({
       path: '/projects/:projectId([1-9][0-9]{0,9})/:workspaceView(history|proposals)?/:proposalId([1-9][0-9]{0,9})?',
       component: () => import('../modules/workspace/WorkspacePage.vue'),
       meta: { title: 'Редактор', requiresAuth: true, workspaceLayout: true },
+    },
+    {
+      path: '/templates',
+      component: () => import('../modules/templates/TemplatesPage.vue'),
+      meta: { title: 'Шаблони', requiresAuth: true },
+    },
+    {
+      path: SHARED_TEMPLATE_PATH,
+      component: () => import('../modules/templates/TemplatesPage.vue'),
+      meta: { title: 'Спільний шаблон' },
     },
     {
       path: '/settings/account',
@@ -54,7 +65,22 @@ export const router = createRouter({
   scrollBehavior: () => ({ top: 0 }),
 });
 
-router.beforeEach((to) => {
+let pendingShareFragment = '';
+
+router.beforeEach((to, from) => {
+  if (to.path === SHARED_TEMPLATE_PATH) {
+    const fragment = pendingShareFragment;
+    pendingShareFragment = '';
+    if (!to.hash && fragment) return { path: to.path, hash: fragment, replace: true };
+  } else if (
+    to.meta.authLayout &&
+    to.query.returnTo === SHARED_TEMPLATE_PATH &&
+    from.path === SHARED_TEMPLATE_PATH &&
+    shareToken(from.hash)
+  ) {
+    // Resume after sign-in without including the secret in the login URL or storing it on disk.
+    pendingShareFragment = from.hash;
+  } else if (!to.meta.authLayout) pendingShareFragment = '';
   if (to.params.proposalId && to.params.workspaceView !== 'proposals') return '/404';
   const authenticated = identitySession.isAuthenticated();
   if (to.meta.requiresAuth && !authenticated) {

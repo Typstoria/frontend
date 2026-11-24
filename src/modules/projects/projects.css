@@ -187,7 +187,7 @@
   left: 0;
 }
 
-@media (max-width: 640px) {
+@media (max-width: 720px) {
   .projects-page .projects-heading {
     align-items: stretch;
     flex-direction: column;
@@ -249,5 +249,15 @@
 @media (max-width: 350px) {
   .projects-page .project-list {
     grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 480px) {
+  .projects-page .projects-toolbar-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .projects-page .projects-search {
+    grid-column: 1 / -1;
   }
 }

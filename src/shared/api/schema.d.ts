@@ -944,6 +944,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/templates/system/{key}/cover-source': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Create an independent revision-1 project from a built-in template. */
+    get: operations['SystemTemplatesController_coverSource'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/templates/system/{key}/copy': {
     parameters: {
       query?: never;
@@ -953,7 +970,6 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** Create an independent revision-1 project from a built-in template. */
     post: operations['SystemTemplatesController_copySystem'];
     delete?: never;
     options?: never;
@@ -1008,6 +1024,23 @@ export interface paths {
     post?: never;
     /** Delete the template version and revoke all its shares. Existing independent copies remain available. */
     delete: operations['TemplatesController_remove'];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/templates/{templateId}/cover-source': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Document-only source for rendering an owned template cover. */
+    get: operations['TemplatesController_coverSource'];
+    put?: never;
+    post?: never;
+    delete?: never;
     options?: never;
     head?: never;
     patch?: never;
@@ -1108,6 +1141,23 @@ export interface paths {
     };
     /** Preview only the fixed shared template. Does not expose its owner's project or account IDs. */
     get: operations['SharedTemplatesController_preview'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/template-shares/cover-source': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Document-only source for rendering a shared template cover. */
+    get: operations['SharedTemplatesController_coverSource'];
     put?: never;
     post?: never;
     delete?: never;
@@ -6224,6 +6274,27 @@ export interface operations {
       };
     };
   };
+  SystemTemplatesController_coverSource: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        key: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/zip': string;
+        };
+      };
+    };
+  };
   SystemTemplatesController_copySystem: {
     parameters: {
       query?: never;
@@ -6339,6 +6410,27 @@ export interface operations {
           [name: string]: unknown;
         };
         content?: never;
+      };
+    };
+  };
+  TemplatesController_coverSource: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        templateId: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/zip': string;
+        };
       };
     };
   };
@@ -6504,6 +6596,28 @@ export interface operations {
         };
         content: {
           'application/json': components['schemas']['TemplatePreviewDto'];
+        };
+      };
+    };
+  };
+  SharedTemplatesController_coverSource: {
+    parameters: {
+      query?: never;
+      header: {
+        /** @description Secret from the share URL fragment; never send it as a query parameter. */
+        'X-Template-Share': string;
+      };
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/zip': string;
         };
       };
     };

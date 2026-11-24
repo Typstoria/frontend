@@ -4,6 +4,7 @@ export class ApiError extends Error {
     readonly code: string,
     message: string,
     readonly requestId: string | null,
+    readonly details?: Readonly<Record<string, unknown>>,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -17,6 +18,7 @@ export interface RequestOptions {
   responseType?: 'blob';
   accessToken?: string;
   idempotencyKey?: string;
+  templateShareToken?: string;
   signal?: AbortSignal;
   query?: Readonly<Record<string, string | number>>;
 }
@@ -41,6 +43,7 @@ export function createApiClient(baseUrl: string, transport: typeof fetch = fetch
     });
     if (options.body !== undefined) headers.set('Content-Type', 'application/json');
     if (options.accessToken) headers.set('Authorization', `Bearer ${options.accessToken}`);
+    if (options.templateShareToken) headers.set('X-Template-Share', options.templateShareToken);
     if (options.idempotencyKey) headers.set('Idempotency-Key', options.idempotencyKey);
 
     const timeout = AbortSignal.timeout(
@@ -75,6 +78,7 @@ export function createApiClient(baseUrl: string, transport: typeof fetch = fetch
         typeof error?.requestId === 'string'
           ? error.requestId
           : response.headers.get('X-Request-Id'),
+        isRecord(error?.details) ? error.details : undefined,
       );
     }
     if (data === undefined) {

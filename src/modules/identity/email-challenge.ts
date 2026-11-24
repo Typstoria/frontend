@@ -1,3 +1,5 @@
+import { SHARED_TEMPLATE_PATH } from '../templates/share-navigation';
+
 export function takeEmailChallenge(
   location: Pick<Location, 'hash' | 'pathname' | 'search'>,
   history: Pick<History, 'replaceState' | 'state'>,
@@ -11,7 +13,8 @@ export function takeEmailChallenge(
 
 export function safeReturnTo(value: unknown): string {
   // Only known private destinations. Never forward credentials, fragments or external URLs.
-  if (value === '/settings/account') return value;
+  if (value === '/settings/account' || value === '/templates' || value === SHARED_TEMPLATE_PATH)
+    return value;
   if (typeof value === 'string') {
     const route =
       /^\/projects\/([1-9][0-9]{0,9})(?:\/history|\/proposals(?:\/([1-9][0-9]{0,9}))?)?$/.exec(

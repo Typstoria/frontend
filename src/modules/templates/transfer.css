@@ -1,0 +1,48 @@
+.transfer-revision {
+  margin: 0 0 18px;
+}
+.transfer-hint {
+  font-size: 13px;
+  margin: 4px 0 0;
+}
+.modal-dialog .transfer-check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.transfer-check input[type='checkbox'] {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--color-primary);
+}
+.modal-dialog .form-field select,
+.modal-dialog .form-field textarea {
+  min-width: 0;
+  width: 100%;
+  padding: 9px 11px;
+  font: inherit;
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+}
+.modal-dialog .form-field textarea {
+  resize: vertical;
+}
+.transfer-file-picker {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.transfer-file-picker .button {
+  min-height: 44px;
+}
+.transfer-file-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 14px;
+}

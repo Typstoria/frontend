@@ -49,10 +49,12 @@ import { compilationRetryLabels, createCompilationModel } from './compilation-mo
 import { createHistoryApi } from './history-api';
 import WorkspaceOutput from './WorkspaceOutput.vue';
 import WorkspaceDiagnostics from './WorkspaceDiagnostics.vue';
+import { downloadBlob } from '../../shared/files/download';
 import WorkspaceSeparator from './WorkspaceSeparator.vue';
 import WorkspaceRestoreStatus from './WorkspaceRestoreStatus.vue';
 import WorkspaceTabs from './WorkspaceTabs.vue';
 import FileAddMenu from './FileAddMenu.vue';
+import ProjectTransferDialog from '../templates/ProjectTransferDialog.vue';
 import WorkspaceMainMenu, { type WorkspaceMainMenuGroup } from './WorkspaceMainMenu.vue';
 import { createProjectsApi, titleError } from '../projects/projects-api';
 import { openPdfTab } from './pdf-tab';
@@ -363,6 +365,12 @@ function openResource(action: ResourceAction, trigger?: HTMLElement) {
 }
 const diagnosticsOpen = ref(false);
 const projectsApi = createProjectsApi(identitySession.request);
+const transfer = ref<{
+  mode: 'template' | 'export';
+  revisionId: number;
+  revisionNumber: number;
+  hasUnsavedChanges: boolean;
+} | null>(null);
 const projectAction = ref<'rename' | 'delete' | null>(null);
 const projectTitle = ref('');
 const projectActionBusy = ref(false);
@@ -426,6 +434,13 @@ const menuGroups = computed<WorkspaceMainMenuGroup[]>(() => [
       { id: 'history', label: 'Історія версій' },
       { id: 'proposals', label: 'ШІ-пропозиції' },
       {
+        id: 'save-template',
+        label: 'Зберегти як шаблон…',
+        separatorBefore: true,
+        disabled: !state.snapshot,
+      },
+      { id: 'export-zip', label: 'Експортувати ZIP…', disabled: !state.snapshot },
+      {
         id: 'rename-project',
         label: 'Перейменувати проєкт…',
         separatorBefore: true,
@@ -467,7 +482,17 @@ function runWorkspaceCommand(id: string, trigger: HTMLElement) {
   else if (id === 'context') void openContext();
   else if (id === 'history') void router.push(`${workspacePath}/history`);
   else if (id === 'proposals') void router.push(`${workspacePath}/proposals`);
-  else if (id === 'rename-project' || id === 'delete-project') {
+  else if (id === 'save-template' || id === 'export-zip') {
+    const snapshot = state.snapshot;
+    if (!snapshot) return;
+    transfer.value = {
+      mode: id === 'save-template' ? 'template' : 'export',
+      revisionId: snapshot.revision.id,
+      revisionNumber: snapshot.revision.number,
+      hasUnsavedChanges:
+        hasDraftText.value || state.contextText !== snapshot.contextText || !!state.pending,
+    };
+  } else if (id === 'rename-project' || id === 'delete-project') {
     projectTitle.value = state.snapshot?.project.title ?? '';
     projectTitleError.value = '';
     projectActionError.value = '';
@@ -1521,14 +1546,6 @@ function downloadCopy() {
   );
   downloadBlob(blob, `project-${projectId}-draft.json`);
 }
-function downloadBlob(blob: Blob, filename: string) {
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = filename;
-  link.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
 function initializeWorkspaceOutput() {
   if (historyOpen.value || reviewOpen.value) return;
   if (!startupAttempted.value) {
@@ -2352,6 +2369,13 @@ onBeforeUnmount(() => {
         @retry="retryResource"
         @dismiss="dismissResource"
         @closed="resourceClosed"
+      />
+      <ProjectTransferDialog
+        v-if="transfer"
+        v-bind="transfer"
+        :project-id="projectId"
+        :project-title="state.snapshot.project.title"
+        @dismiss="transfer = null"
       />
       <ModalDialog
         :open="!!projectAction"

@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router';
 import { identitySession } from '../modules/identity/identity-session';
 import { disableGoogleAutoSelect } from '../modules/identity/google-identity';
+import { SHARED_TEMPLATE_PATH } from '../modules/templates/share-navigation';
 import BrandLogo from '../shared/ui/BrandLogo.vue';
 import { safeReturnTo } from '../modules/identity/email-challenge';
 import {
@@ -81,6 +82,7 @@ async function logout() {
       </RouterLink>
       <nav class="main-nav" aria-label="Головна навігація">
         <RouterLink to="/projects">Проєкти</RouterLink>
+        <RouterLink v-if="user" to="/templates">Шаблони</RouterLink>
         <template v-if="route.path.startsWith('/preview/')">
           <RouterLink to="/preview/workspace">Редактор</RouterLink>
           <RouterLink to="/preview/review">ШІ-пропозиції</RouterLink>
@@ -130,7 +132,16 @@ async function logout() {
           </svg>
         </button>
       </div>
-      <RouterLink v-else class="button button-secondary" to="/auth/login">Увійти</RouterLink>
+      <RouterLink
+        v-else
+        class="button button-secondary"
+        :to="{
+          path: '/auth/login',
+          query: route.path === SHARED_TEMPLATE_PATH ? { returnTo: SHARED_TEMPLATE_PATH } : {},
+        }"
+      >
+        Увійти
+      </RouterLink>
     </header>
     <div v-if="route.path.startsWith('/preview/')" class="prototype-notice">
       Демонстраційний макет · дані документа не зберігаються

@@ -13,7 +13,7 @@
 | Робочий простір           | `/projects/:projectId`                       | Файли, текст, PDF, контекст, структура, annotations                            |
 | Пропозиція                | `/projects/:projectId/proposals/:proposalId` | Diff, validation, candidate PDF, accept/reject                                 |
 | Історія                   | `/projects/:projectId/history`               | Read-only версія, diff, restore як нова версія                                 |
-| Шаблони                   | `/templates`, `/shared/templates/:token`     | Вибір, незалежна копія, обмежений share snapshot                               |
+| Шаблони                   | `/templates`, `/templates/shared#…`          | Каталог у верхній навігації, обкладинки першої сторінки, копія й поширення     |
 | Доступи й обліковий запис | `/settings/account`                          | OAuth-підключення та відкликання; ім’я, пошта, зміна пароля, видалення акаунта |
 | Backup                    | `/projects/:projectId/settings/backup`       | GitHub repo/branch, склад копії, status/retry                                  |
 

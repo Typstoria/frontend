@@ -29,6 +29,7 @@
     "@myriaddreamin/typst-ts-web-compiler": "0.7.0",
     "@myriaddreamin/typst.ts": "0.7.0",
     "@vue/devtools-api": "8.2.1",
+    "fflate": "0.8.2",
     "pdfjs-dist": "6.5.438",
     "pinia": "4.1.0",
     "vue": "3.5.44",

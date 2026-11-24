@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 import { RouterLink } from 'vue-router';
 import { ApiError } from '../../shared/api/client';
 import ModalDialog from '../../shared/ui/ModalDialog.vue';
@@ -7,8 +7,12 @@ import LoadError from '../../shared/ui/LoadError.vue';
 import { identitySession } from '../identity/identity-session';
 import { createProjectsApi, titleError } from './projects-api';
 import type { Project } from './projects-api';
-import ProjectPreview from './ProjectPreview.vue';
+import DocumentCover from '../../shared/ui/DocumentCover.vue';
 import './projects.css';
+
+const ImportZipDialog = defineAsyncComponent(() => import('../templates/ImportZipDialog.vue'));
+const importOpen = ref(false);
+const importOpened = ref(false);
 
 type Dialog = { kind: 'create' } | { kind: 'rename' | 'delete'; project: Project };
 const api = createProjectsApi(identitySession.request);
@@ -293,6 +297,15 @@ onBeforeUnmount(() => {
           />
         </div>
         <button
+          class="button button-secondary projects-import"
+          @click="
+            importOpened = true;
+            importOpen = true;
+          "
+        >
+          Імпорт ZIP
+        </button>
+        <button
           id="new-project"
           class="button button-primary projects-create"
           :disabled="!!loading"
@@ -333,11 +346,14 @@ onBeforeUnmount(() => {
           :aria-label="project.title"
           :aria-describedby="`project-updated-${project.id}`"
         >
-          <ProjectPreview
+          <DocumentCover
             :key="`${project.id}:${project.preview?.version ?? 'blank'}`"
-            :project-id="project.id"
-            :version="project.preview?.version ?? null"
-            :load="api.preview"
+            class="project-preview"
+            :load="
+              project.preview
+                ? (signal) => api.preview(project.id, project.preview!.version, signal)
+                : undefined
+            "
           />
           <h2>
             {{ project.title }}
@@ -406,6 +422,7 @@ onBeforeUnmount(() => {
       </button>
     </div>
 
+    <ImportZipDialog v-if="importOpened" :open="importOpen" @dismiss="importOpen = false" />
     <ModalDialog
       :open="dialogOpen"
       :title="dialogTitle"
