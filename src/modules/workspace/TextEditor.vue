@@ -4,6 +4,8 @@ import type { EditorState, StateEffectType } from '@codemirror/state';
 import type { DecorationSet, EditorView } from '@codemirror/view';
 import type { TextSelection } from './text-anchor';
 import type { CommentLayout } from './comment-layout';
+import type { CompletionRequest } from './editor-completion';
+import { cursorPosition, readFormatting } from './editor-language-results';
 
 const props = defineProps<{
   modelValue: string;
@@ -15,6 +17,7 @@ const props = defineProps<{
   canComment?: boolean;
   alignComments?: boolean;
   activeAnnotation?: number | null;
+  complete?: CompletionRequest;
 }>();
 
 const emit = defineEmits<{
@@ -25,6 +28,8 @@ const emit = defineEmits<{
   annotation: [id: number];
   'gutter-comment': [id: number];
   comment: [];
+  'language-command': [method: 'formatting' | 'definition'];
+  'completion-empty': [];
   'comment-layout': [layout: CommentLayout];
 }>();
 
@@ -47,6 +52,7 @@ let composing = false;
 let destroyed = false;
 let syncingExternalValue = false;
 let ready: Promise<void> | undefined;
+let startCompletion: typeof import('@codemirror/autocomplete').startCompletion | undefined;
 
 function dispatchExternalValue(value: string) {
   if (!view || view.state.doc.toString() === value) return;
@@ -170,12 +176,16 @@ function updateAnnotations() {
 }
 
 async function initialize() {
-  const [loadedStateModule, viewModule, commandsModule] = await Promise.all([
-    import('@codemirror/state'),
-    import('@codemirror/view'),
-    import('@codemirror/commands'),
-  ]);
+  const [loadedStateModule, viewModule, commandsModule, autocomplete, { editorCompletion }] =
+    await Promise.all([
+      import('@codemirror/state'),
+      import('@codemirror/view'),
+      import('@codemirror/commands'),
+      import('@codemirror/autocomplete'),
+      import('./editor-completion'),
+    ]);
   if (destroyed || !viewport.value) return;
+  startCompletion = autocomplete.startCompletion;
   stateModule = loadedStateModule;
   modules = viewModule;
   readonlyCompartment = new loadedStateModule.Compartment();
@@ -195,12 +205,51 @@ async function initialize() {
     viewModule.lineNumbers(),
     viewModule.highlightActiveLine(),
     viewModule.highlightActiveLineGutter(),
+    editorCompletion(
+      () =>
+        props.complete && !composing
+          ? { request: props.complete, fileId: activeDocumentId }
+          : undefined,
+      () => emit('completion-empty'),
+    ),
+    loadedStateModule.Prec.high(
+      viewModule.keymap.of([
+        ...autocomplete.completionKeymap.filter((binding) => binding.key !== 'Ctrl-Space'),
+        {
+          key: 'Ctrl-Space',
+          run(editor) {
+            return (
+              !!props.complete &&
+              !composing &&
+              !editor.state.readOnly &&
+              autocomplete.startCompletion(editor)
+            );
+          },
+        },
+      ]),
+    ),
     viewModule.keymap.of([
       {
         key: 'Mod-Alt-m',
         run: () => {
           if (!props.canComment || composing) return false;
           emit('comment');
+          return true;
+        },
+      },
+      {
+        key: 'Shift-Alt-f',
+        run: (editor) => {
+          if (!props.complete || editor.state.readOnly || composing) return false;
+          emit('language-command', 'formatting');
+          return true;
+        },
+      },
+      {
+        key: 'F12',
+        run: (editor) => {
+          if (!props.complete || editor.state.readOnly || composing) return false;
+          emit('language-command', 'definition');
           return true;
         },
       },
@@ -394,7 +443,56 @@ async function reveal(documentId: number, selection: TextSelection) {
   });
   view.focus();
 }
-defineExpose({ focus: () => view?.focus(), focusAt, reveal });
+type SourceCapture = NonNullable<ReturnType<typeof captureSource>>;
+function captureSource() {
+  if (!view || view.state.readOnly || composing) return;
+  const { doc, selection } = view.state;
+  return {
+    fileId: activeDocumentId,
+    doc,
+    cursor: selection.main.head,
+    position: cursorPosition(doc, selection.main.head),
+  };
+}
+
+function sameSource(source: SourceCapture, includeCursor = false) {
+  return (
+    view &&
+    !view.state.readOnly &&
+    !composing &&
+    activeDocumentId === source.fileId &&
+    view.state.doc === source.doc &&
+    (!includeCursor || view.state.selection.main.head === source.cursor)
+  );
+}
+
+function applyFormatting(source: SourceCapture, value: unknown) {
+  if (!view || !sameSource(source)) return null;
+  const edits = readFormatting(value, source.doc);
+  if (!edits) throw new Error('Invalid formatting edits');
+  const changed = edits.filter(
+    (edit) => source.doc.sliceString(edit.from, edit.to) !== edit.insert,
+  );
+  if (changed.length)
+    view.dispatch({ changes: changed, scrollIntoView: true, userEvent: 'input.format' });
+  return changed.length > 0;
+}
+
+function showCompletions() {
+  if (!view || !props.complete || view.state.readOnly || composing) return;
+  view.focus();
+  startCompletion?.(view);
+}
+
+defineExpose({
+  focus: () => view?.focus(),
+  focusAt,
+  reveal,
+  captureSource,
+  sameSource,
+  applyFormatting,
+  showCompletions,
+});
 
 onBeforeUnmount(() => {
   destroyed = true;
@@ -538,5 +636,42 @@ onBeforeUnmount(() => {
 .cm-annotation-current {
   background: #ffe49d;
   box-shadow: inset 0 -2px #977222;
+}
+
+.text-editor .cm-tooltip.workspace-completions {
+  max-width: min(420px, calc(100vw - 24px));
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  color: var(--color-text);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-dropdown, 0 8px 20px #102b411c);
+  overflow: hidden;
+}
+
+.text-editor .workspace-completions > ul {
+  max-width: 100%;
+  max-height: min(190px, 30dvh);
+  font: 13px var(--font-code);
+}
+
+.text-editor .workspace-completions > ul > li {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 32px;
+  padding: 7px 9px;
+}
+
+.text-editor .workspace-completions > ul > li[aria-selected='true'] {
+  color: var(--color-text);
+  background: color-mix(in srgb, var(--color-primary) 11%, var(--color-surface));
+  box-shadow: inset 2px 0 var(--color-primary);
+}
+
+@media (max-width: 720px) {
+  .text-editor .workspace-completions > ul > li {
+    min-height: 44px;
+    padding-block: 11px;
+  }
 }
 </style>

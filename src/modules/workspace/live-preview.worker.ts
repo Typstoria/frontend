@@ -54,8 +54,40 @@ function isFont(path: string) {
   return /\.(?:ttf|otf|ttc)$/i.test(path);
 }
 
+// The compiler reports zero-based Unicode scalar columns; the editor uses UTF-16.
+function diagnosticRange(range: unknown, lines: string[]): LivePreviewDiagnostic['range'] {
+  const match = typeof range === 'string' && /^(\d+):(\d+)-(\d+):(\d+)$/.exec(range);
+  if (!match) return;
+  const [startLine, startColumn, endLine, endColumn] = match.slice(1).map(Number) as [
+    number,
+    number,
+    number,
+    number,
+  ];
+  function utf16(line: number, column: number) {
+    if (!Number.isSafeInteger(column) || lines[line] === undefined) return;
+    let offset = 0;
+    for (const char of lines[line]) {
+      if (column-- === 0) return offset;
+      offset += char.length;
+    }
+    if (column === 0) return offset;
+  }
+  const start = utf16(startLine, startColumn);
+  const end = utf16(endLine, endColumn);
+  if (
+    start === undefined ||
+    end === undefined ||
+    startLine > endLine ||
+    (startLine === endLine && start > end)
+  )
+    return;
+  return { start: { line: startLine, character: start }, end: { line: endLine, character: end } };
+}
+
 function diagnosticsFrom(value: unknown): LivePreviewDiagnostic[] {
   if (!Array.isArray(value)) return [];
+  const sourceLines = new Map<string, string[]>();
   return value.slice(0, 50).flatMap((item): LivePreviewDiagnostic[] => {
     if (!item || typeof item !== 'object' || typeof item.message !== 'string') return [];
     const severity = String(item.severity).toLowerCase();
@@ -64,7 +96,24 @@ function diagnosticsFrom(value: unknown): LivePreviewDiagnostic[] {
       !item.package && typeof item.path === 'string'
         ? normalizePath(item.path)?.slice(1)
         : undefined;
-    return [{ message: item.message.slice(0, 600), severity, ...(path ? { path } : {}) }];
+    const source = path && typeof item.range === 'string' ? files.get('/' + path) : undefined;
+    let range: LivePreviewDiagnostic['range'];
+    if (path && source) {
+      let lines = sourceLines.get(path);
+      if (!lines) {
+        lines = new TextDecoder('utf-8', { ignoreBOM: true }).decode(source).split(/\r\n?|\n/u);
+        sourceLines.set(path, lines);
+      }
+      range = diagnosticRange(item.range, lines);
+    }
+    return [
+      {
+        message: item.message.slice(0, 600),
+        severity,
+        ...(path ? { path } : {}),
+        ...(range ? { range } : {}),
+      },
+    ];
   });
 }
 

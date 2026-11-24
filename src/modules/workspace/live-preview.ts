@@ -30,6 +30,7 @@ export function createLivePreview(
 ) {
   const document = shallowRef<Uint8Array>();
   const diagnostics = shallowRef<LivePreviewDiagnostic[]>([]);
+  const diagnosticInput = shallowRef<PreviewInput>();
   let worker: Worker | undefined;
   let generation = 0;
   let wanted: Request | undefined;
@@ -68,6 +69,7 @@ export function createLivePreview(
     retryAfter = performance.now() + 2_000;
     document.value = undefined;
     diagnostics.value = [];
+    diagnosticInput.value = undefined;
     complete(request);
   }
 
@@ -84,6 +86,7 @@ export function createLivePreview(
         document.value = message.document;
         diagnostics.value = message.diagnostics ?? [];
       } else if (message.type === 'failed') diagnostics.value = message.diagnostics ?? [];
+      diagnosticInput.value = request.input;
     }
     complete(request);
   }
@@ -178,8 +181,10 @@ export function createLivePreview(
         const target = ensureWorker();
         const { entrypoint, project, changes } = await prepare(request, controller.signal);
         if (request.generation !== generation) return complete(request);
-        if (!changes.length && entrypoint === sentEntrypoint && hasCurrentOutput)
+        if (!changes.length && entrypoint === sentEntrypoint && hasCurrentOutput) {
+          diagnosticInput.value = request.input;
           return complete(request);
+        }
         fetchAbort = undefined;
         const message: LivePreviewCompileRequest = {
           type: 'compile',
@@ -200,6 +205,7 @@ export function createLivePreview(
   return {
     document,
     diagnostics,
+    diagnosticInput,
     warm,
     request(input: PreviewInput) {
       wanted = { generation: ++generation, input, due: performance.now() + editDelay };
@@ -229,6 +235,7 @@ export function createLivePreview(
       retryAfter = 0;
       document.value = undefined;
       diagnostics.value = [];
+      diagnosticInput.value = undefined;
     },
   };
 }

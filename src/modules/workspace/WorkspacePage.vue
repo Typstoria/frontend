@@ -49,6 +49,17 @@ import { compilationRetryLabels, createCompilationModel } from './compilation-mo
 import { createHistoryApi } from './history-api';
 import WorkspaceOutput from './WorkspaceOutput.vue';
 import WorkspaceDiagnostics from './WorkspaceDiagnostics.vue';
+import WorkspaceOutline from './WorkspaceOutline.vue';
+import type { OutlineNavigation } from './workspace-outline';
+import type { Position } from './compilation-diagnostics';
+import {
+  createLanguageSession,
+  languageToolsAvailable,
+  type EditorBuffers,
+  type LanguageMethod,
+} from './editor-language-session';
+import { readDefinitions } from './editor-language-results';
+import type { Snapshot } from './workspace-api';
 import { downloadBlob } from '../../shared/files/download';
 import WorkspaceSeparator from './WorkspaceSeparator.vue';
 import WorkspaceRestoreStatus from './WorkspaceRestoreStatus.vue';
@@ -364,6 +375,15 @@ function openResource(action: ResourceAction, trigger?: HTMLElement) {
   resourceAction.value = action;
 }
 const diagnosticsOpen = ref(false);
+const outlineOpen = ref(false);
+const outlineDrafts = computed(
+  () =>
+    new Map(
+      Object.entries(state.files)
+        .filter(([, file]) => file.content !== file.base)
+        .map(([id, file]) => [Number(id), file.content]),
+    ),
+);
 const projectsApi = createProjectsApi(identitySession.request);
 const transfer = ref<{
   mode: 'template' | 'export';
@@ -383,6 +403,13 @@ const menuGroups = computed<WorkspaceMainMenuGroup[]>(() => [
       { id: 'new-file', label: 'Створити файл', disabled: actionsDisabled.value },
       { id: 'new-folder', label: 'Створити папку', disabled: actionsDisabled.value },
       { id: 'upload', label: 'Завантажити файл…', disabled: actionsDisabled.value },
+      ...(languageEnabled.value
+        ? [
+            { id: 'complete', label: 'Підказки Typst', separatorBefore: true },
+            { id: 'formatting', label: 'Форматувати файл', disabled: languageBusy.value },
+            { id: 'definition', label: 'Перейти до визначення', disabled: languageBusy.value },
+          ]
+        : []),
       ...(compilation.state.artifact
         ? [{ id: 'download-pdf', label: 'Завантажити PDF', separatorBefore: true }]
         : []),
@@ -412,13 +439,18 @@ const menuGroups = computed<WorkspaceMainMenuGroup[]>(() => [
         checked: effectiveViewMode.value === 'preview',
         disabled: !!inlineName.value,
       },
+      {
+        id: 'outline',
+        label: 'Структура документа…',
+        separatorBefore: true,
+        disabled: !!inlineName.value,
+      },
       ...(displayDiagnostics.value?.items.length
         ? [
             {
               id: 'diagnostics',
               label: 'Діагностика',
               checked: diagnosticsOpen.value,
-              separatorBefore: true,
             },
           ]
         : []),
@@ -467,6 +499,8 @@ function runWorkspaceCommand(id: string, trigger: HTMLElement) {
       trigger,
     );
   } else if (id === 'upload') openResource({ directory: creationDirectory.value }, trigger);
+  else if (id === 'complete') editor.value?.showCompletions();
+  else if (id === 'formatting' || id === 'definition') void runLanguageCommand(id);
   else if (id === 'download-pdf' && compilation.state.artifact)
     downloadPdf(compilation.state.artifact);
   else if (id === 'files') {
@@ -477,6 +511,7 @@ function runWorkspaceCommand(id: string, trigger: HTMLElement) {
     }
     filesVisible.value = true;
   } else if (id === 'code' || id === 'split' || id === 'preview') viewMode.value = id;
+  else if (id === 'outline') outlineOpen.value = true;
   else if (id === 'diagnostics') diagnosticsOpen.value = !diagnosticsOpen.value;
   else if (id === 'reset-layout') resetLayout();
   else if (id === 'context') void openContext();
@@ -1001,7 +1036,12 @@ const livePreviewAllowed = computed(
 );
 const previewInput = computed<PreviewInput | null>(() => {
   const snapshot = state.snapshot;
-  if (!snapshot || !livePreviewAllowed.value || !showOutput.value || !previewEdited.value)
+  if (
+    !snapshot ||
+    !livePreviewAllowed.value ||
+    !previewEdited.value ||
+    (!showOutput.value && !hasDraftText.value)
+  )
     return null;
   return {
     revisionId: snapshot.revision.id,
@@ -1028,6 +1068,7 @@ const displayDiagnostics = computed(() => {
     snapshot &&
     livePreviewAllowed.value &&
     issues.length &&
+    draftDiagnosticsMatch(livePreview.diagnosticInput.value) &&
     (hasDraftText.value || compilation.state.artifact?.revision.id !== snapshot.revision.id)
   ) {
     return {
@@ -1036,7 +1077,7 @@ const displayDiagnostics = computed(() => {
       items: issues.map((item): Diagnostic => {
         const path = item.path ?? null;
         const file = snapshot.tree.find((entry) => entry.path === path);
-        return { ...item, path, fileId: file?.fileId ?? null, range: null };
+        return { ...item, path, fileId: file?.fileId ?? null, range: item.range ?? null };
       }),
     };
   }
@@ -1062,12 +1103,40 @@ function canOpenDiagnostic(item: Diagnostic, revisionId: number) {
 async function openDiagnostic(item: Diagnostic, revisionId: number) {
   const { fileId } = item;
   if (fileId === null || !canOpenDiagnostic(item, revisionId)) return;
+  const isDraft = displayDiagnostics.value?.revisionNumber === null;
+  const resultInput = isDraft ? livePreview.diagnosticInput.value : undefined;
+  if (isDraft && !draftDiagnosticsMatch(resultInput)) return;
   await selectFile(fileId);
   await nextTick();
   if (activeTab.value !== fileId || !canOpenDiagnostic(item, revisionId)) return;
   const file = state.files[fileId];
-  const position = file && file.content === file.base ? (item.range?.start ?? null) : null;
-  await editor.value?.focusAt(fileId, position);
+  const current = isDraft ? draftDiagnosticsMatch(resultInput) : file?.content === file?.base;
+  await editor.value?.focusAt(fileId, current ? (item.range?.start ?? null) : null);
+}
+
+function draftDiagnosticsMatch(input: PreviewInput | undefined) {
+  if (!input || state.snapshot?.revision.id !== input.revisionId) return false;
+  return Object.entries(state.files).every(
+    ([id, file]) => file.content === (input.texts.get(Number(id)) ?? file.base),
+  );
+}
+
+async function openSourcePosition({ fileId, position, sha256, draft }: OutlineNavigation) {
+  const file = state.snapshot?.tree.find((file) => file.fileId === fileId);
+  if (!file || file.contentKind !== 'text') return;
+  revealFolder(parentFolder(file.path));
+  treeSelection.value = fileId;
+  await selectFile(fileId);
+  await nextTick();
+  if (activeTab.value !== fileId) return;
+  const source = state.files[fileId];
+  const currentHash = state.snapshot?.tree.find((file) => file.fileId === fileId)?.sha256;
+  const unchanged =
+    source &&
+    (draft !== undefined
+      ? source.content === draft
+      : currentHash === sha256 && source.content === source.base);
+  await editor.value?.focusAt(fileId, unchanged ? position : null);
 }
 function openPdf(artifact: NonNullable<typeof compilation.state.artifact>) {
   pdfOpenError.value = '';
@@ -1236,6 +1305,192 @@ watch(
   { deep: true, flush: 'sync' },
 );
 const editor = ref<InstanceType<typeof TextEditor> | null>(null);
+const languageSession = createLanguageSession(projectId, identitySession.request);
+const languageAvailable = ref(false);
+const languageBusy = ref(false);
+const languageFeedback = ref('');
+const definitionOptions = ref<(OutlineNavigation & { path: string })[]>([]);
+const definitionsOpen = ref(false);
+let selectedDefinition: OutlineNavigation | undefined;
+let languageCommand: AbortController | undefined;
+const languageEnabled = computed(() => {
+  const fileId = activeTab.value;
+  return (
+    languageAvailable.value &&
+    typeof fileId === 'number' &&
+    state.selectedId === fileId &&
+    !!state.files[fileId] &&
+    !onlyOutput.value &&
+    !historyOpen.value &&
+    !reviewOpen.value &&
+    !state.fileLoading &&
+    !state.fileError &&
+    !restoreLocked.value &&
+    !state.conflict &&
+    !state.conflictLoading &&
+    reviewRevisionToRefresh.value === null &&
+    state.structure.length === 0 &&
+    identitySession.user.value?.id === ownerId &&
+    !!state.snapshot?.tree.some(
+      (file) => file.fileId === fileId && file.contentKind === 'text' && file.path.endsWith('.typ'),
+    )
+  );
+});
+
+function currentEditorBuffers(): EditorBuffers {
+  return new Map(
+    Object.entries(state.files).map(([id, { base, content }]) => [Number(id), { base, content }]),
+  );
+}
+
+function languageContextMatches(snapshot: Snapshot, buffers: EditorBuffers) {
+  const current = state.snapshot;
+  if (
+    !current ||
+    !languageEnabled.value ||
+    current.mainFileId !== snapshot.mainFileId ||
+    current.tree.length !== snapshot.tree.length
+  )
+    return false;
+  const latest = new Map(current.tree.map((file) => [file.fileId, file]));
+  return snapshot.tree.every((file) => {
+    const next = latest.get(file.fileId);
+    if (!next || next.path !== file.path || next.contentKind !== file.contentKind) return false;
+    const before = buffers.get(file.fileId);
+    const after = state.files[file.fileId];
+    if (before && after) return before.content === after.content;
+    return (
+      file.sha256 === next.sha256 &&
+      (!before || before.content === before.base) &&
+      (!after || after.content === after.base)
+    );
+  });
+}
+
+async function queryLanguage(
+  fileId: number,
+  method: LanguageMethod,
+  signal: AbortSignal,
+  position?: Position,
+) {
+  const snapshot = state.snapshot;
+  if (!snapshot || !languageEnabled.value || activeTab.value !== fileId)
+    throw new DOMException('Editor changed', 'AbortError');
+  const buffers = currentEditorBuffers();
+  const answer = await languageSession.query(
+    {
+      revisionId: snapshot.revision.id,
+      fileId,
+      buffers,
+      method,
+      ...(position ? { position } : {}),
+    },
+    signal,
+  );
+  signal.throwIfAborted();
+  if (activeTab.value !== fileId || !languageContextMatches(snapshot, buffers))
+    throw new DOMException('Editor changed', 'AbortError');
+  return { ...answer, snapshot, buffers };
+}
+
+function receiveLanguageError(error: unknown, signal: AbortSignal, message: string) {
+  if (signal.aborted || (error instanceof DOMException && error.name === 'AbortError')) return;
+  if (error instanceof ApiError && error.code === 'EDITOR_UNAVAILABLE')
+    languageAvailable.value = false;
+  languageFeedback.value = message;
+}
+
+async function requestCompletion(
+  fileId: number,
+  position: Position,
+  signal: AbortSignal,
+  explicit: boolean,
+) {
+  if (explicit) languageFeedback.value = '';
+  try {
+    return (await queryLanguage(fileId, 'completion', signal, position)).result;
+  } catch (error) {
+    if (explicit)
+      receiveLanguageError(error, signal, 'Не вдалося отримати підказки. Спробуйте ще раз.');
+    else if (error instanceof ApiError && error.code === 'EDITOR_UNAVAILABLE')
+      languageAvailable.value = false;
+    throw error;
+  }
+}
+
+async function runLanguageCommand(method: 'formatting' | 'definition') {
+  const source = editor.value?.captureSource();
+  if (!languageEnabled.value || languageBusy.value || !source) return;
+  const controller = new AbortController();
+  languageCommand = controller;
+  languageBusy.value = true;
+  languageFeedback.value = method === 'formatting' ? 'Форматуємо файл…' : 'Шукаємо визначення…';
+  const pendingMessage = languageFeedback.value;
+  editor.value?.focus();
+  try {
+    const { result, files, buffers, snapshot } = await queryLanguage(
+      source.fileId,
+      method,
+      controller.signal,
+      method === 'definition' ? source.position : undefined,
+    );
+    if (!editor.value?.sameSource(source, method === 'definition')) return;
+    if (method === 'formatting') {
+      const changed = editor.value.applyFormatting(source, result);
+      if (changed !== null)
+        languageFeedback.value = changed ? 'Файл відформатовано.' : 'Файл уже відформатовано.';
+      return;
+    }
+
+    const targets = readDefinitions(result, files).flatMap((definition) => {
+      const file = snapshot.tree.find((file) => file.fileId === definition.fileId);
+      if (!file || file.contentKind !== 'text') return [];
+      const buffer = buffers.get(definition.fileId);
+      return [
+        {
+          ...definition,
+          path: file.path,
+          sha256: file.sha256,
+          draft: buffer?.content,
+        },
+      ];
+    });
+    if (targets.length === 1) await openSourcePosition(targets[0]!);
+    else if (targets.length > 1) {
+      definitionOptions.value = targets;
+      definitionsOpen.value = true;
+    } else languageFeedback.value = 'Визначення не знайдено.';
+  } catch (error) {
+    receiveLanguageError(
+      error,
+      controller.signal,
+      method === 'formatting' ? 'Не вдалося відформатувати файл.' : 'Не вдалося знайти визначення.',
+    );
+  } finally {
+    if (languageCommand === controller) {
+      languageCommand = undefined;
+      languageBusy.value = false;
+      if (languageFeedback.value === pendingMessage) languageFeedback.value = '';
+    }
+  }
+}
+
+function chooseDefinition(target: OutlineNavigation) {
+  selectedDefinition = target;
+  definitionsOpen.value = false;
+}
+
+function afterDefinitionsClose() {
+  if (selectedDefinition) void openSourcePosition(selectedDefinition);
+  selectedDefinition = undefined;
+  definitionOptions.value = [];
+}
+
+watch(activeTab, () => {
+  languageCommand?.abort();
+  languageFeedback.value = '';
+});
+
 const commentAnchor = computed(() => {
   const selection = textSelection.value;
   if (!selection || selection.fileId !== activeTab.value || onlyOutput.value) return null;
@@ -1588,8 +1843,15 @@ onMounted(() => {
   splitQuery.addEventListener('change', splitChanged);
   window.addEventListener('pagehide', preferences.flush);
   void loadWorkspace();
+  void languageToolsAvailable(identitySession.request, restoreController.signal)
+    .then((available) => {
+      if (!restoreController.signal.aborted) languageAvailable.value = available;
+    })
+    .catch(() => undefined);
 });
 onBeforeUnmount(() => {
+  languageCommand?.abort();
+  languageSession.dispose();
   livePreview.reset();
   preferences.flush();
   window.removeEventListener('pagehide', preferences.flush);
@@ -2186,6 +2448,13 @@ onBeforeUnmount(() => {
               </button>
               <p v-if="downloadError" role="alert" class="field-error">{{ downloadError }}</p>
             </div>
+            <p
+              v-if="hasFileTab && languageFeedback"
+              class="workspace-language-feedback"
+              role="status"
+            >
+              {{ languageFeedback }}
+            </p>
             <TextEditor
               v-show="
                 hasFileTab &&
@@ -2198,6 +2467,7 @@ onBeforeUnmount(() => {
               :document-id="selected ? state.selectedId : 0"
               :model-value="selected?.content ?? ''"
               :reset-key="state.resetKey"
+              v-bind="languageEnabled ? { complete: requestCompletion } : {}"
               :annotations="annotationMarks"
               :show-comment-gutter="!commentsOpen"
               :active-annotation="activeAnnotation"
@@ -2214,6 +2484,8 @@ onBeforeUnmount(() => {
               "
               @update:model-value="(value, fileId) => model.edit(fileId, value)"
               @save="model.save()"
+              @language-command="runLanguageCommand"
+              @completion-empty="languageFeedback = 'Підказок у цій позиції немає.'"
               @composition="model.composition"
               @selection="receiveSelection"
               @annotation="commentsPanel?.show($event)"
@@ -2277,6 +2549,40 @@ onBeforeUnmount(() => {
           @dirty="commentsDirty = $event"
         />
       </Teleport>
+      <ModalDialog
+        :open="definitionsOpen"
+        title="Визначення"
+        @dismiss="definitionsOpen = false"
+        @closed="afterDefinitionsClose"
+      >
+        <ul class="workspace-definition-list">
+          <li
+            v-for="item in definitionOptions"
+            :key="`${item.fileId}:${item.position.line}:${item.position.character}`"
+          >
+            <button type="button" class="button button-secondary" @click="chooseDefinition(item)">
+              <span>{{ item.path }}</span>
+              <span class="muted">Рядок {{ item.position.line + 1 }}</span>
+            </button>
+          </li>
+        </ul>
+        <div class="modal-actions">
+          <button type="button" class="button button-secondary" @click="definitionsOpen = false">
+            Закрити
+          </button>
+        </div>
+      </ModalDialog>
+      <WorkspaceOutline
+        v-if="!state.conflict"
+        :open="outlineOpen"
+        :project-id="projectId"
+        :snapshot="state.snapshot"
+        :drafts="outlineDrafts"
+        :read-text="workspaceApi.text"
+        :request="identitySession.request"
+        @dismiss="outlineOpen = false"
+        @navigate="openSourcePosition"
+      />
       <WorkspaceDiagnostics
         v-if="!state.conflict"
         v-model:open="diagnosticsOpen"

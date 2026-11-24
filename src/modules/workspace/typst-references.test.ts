@@ -1,8 +1,8 @@
 import { expect, it } from 'vitest';
-import { createReferenceParser, rewriteTypstReferences } from './typst-references';
+import { createTypstParser, rewriteTypstReferences } from './typst-references';
 
 it('updates literal references while preserving import bindings and unrelated text', async () => {
-  const parser = await createReferenceParser();
+  const parser = await createTypstParser();
   try {
     const paths = new Map([
       ['main.typ', 'main.typ'],

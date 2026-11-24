@@ -12,8 +12,11 @@ export interface LivePreviewChange {
   content: string | Uint8Array | null;
 }
 
+type SourcePosition = { line: number; character: number };
+
 export interface LivePreviewDiagnostic {
   path?: string;
+  range?: { start: SourcePosition; end: SourcePosition };
   message: string;
   severity: 'error' | 'warning';
 }

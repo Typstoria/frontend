@@ -33,7 +33,7 @@ async function loadLanguage() {
   return Language.load(grammarWasm);
 }
 
-export async function createReferenceParser() {
+export async function createTypstParser() {
   language ??= loadLanguage().catch((error: unknown) => {
     language = undefined;
     throw error;

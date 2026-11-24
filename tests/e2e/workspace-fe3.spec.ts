@@ -273,6 +273,138 @@ test('autosaves a draft before compiling and shows a protected, continuous PDF',
   await expect(page.locator('.pdf-page-indicator')).toHaveText('2 / 2');
 });
 
+test('opens a heading in another Typst file from the saved outline', async ({ page }, info) => {
+  await installWorkspace(page);
+  const chapter = { ...file, fileId: 11, path: 'chapters/intro.typ' };
+  const chapterText = '= Розділ\n\n== Підрозділ';
+  await page.route('**/api/projects/1/state**', (route) =>
+    route.fulfill({
+      json: {
+        project: { ...project, currentRevisionId: 100 },
+        revision: {
+          id: 100,
+          number: 1,
+          parentRevisionId: null,
+          createdAt: date,
+          commitSha: null,
+          manifestHash: hash,
+          historySyncStatus: 'ready',
+        },
+        mainFileId: 10,
+        contextText: '',
+        tree: [file, chapter],
+      },
+    }),
+  );
+  await page.route('**/api/projects/1/files/11?*', (route) =>
+    route.fulfill({ json: { ...chapter, revisionId: 100, content: chapterText } }),
+  );
+  await page.route('**/api/projects/1/outline?*', (route) => {
+    expect(new URL(route.request().url()).searchParams.get('revisionId')).toBe('100');
+    const range = (line: number, character: number) => ({
+      start: { line, character },
+      end: { line, character: character + 2 },
+    });
+    return route.fulfill({
+      json: {
+        projectId: 1,
+        revisionId: 100,
+        source: 'syntax',
+        files: [
+          {
+            fileId: 11,
+            path: chapter.path,
+            documentVersion: 1,
+            symbols: [
+              {
+                name: 'Розділ',
+                range: range(0, 0),
+                children: [{ name: 'Підрозділ', range: range(2, 0), selectionRange: range(2, 3) }],
+              },
+            ],
+          },
+        ],
+      },
+    });
+  });
+
+  await page.goto('/projects/1');
+  await page
+    .getByRole('button', { name: info.project.name === 'mobile' ? 'Меню' : 'Вигляд', exact: true })
+    .click();
+  await page.getByRole('menuitem', { name: 'Структура документа…' }).click();
+  const outline = page.getByRole('dialog', { name: 'Структура документа' });
+  const item = outline.getByRole('button', { name: 'Підрозділ' });
+  await expect(item).toBeVisible();
+  await expect(outline.getByRole('heading', { name: chapter.path })).toBeVisible();
+  expect(await outline.evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(
+    true,
+  );
+  await page.screenshot({ path: info.outputPath('outline.png'), animations: 'disabled' });
+  await item.click();
+  await expect(outline).toBeHidden();
+  await expect(page.getByRole('textbox', { name: 'Вихідний текст' })).toBeFocused();
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const selection = window.getSelection();
+        const line = selection?.anchorNode?.parentElement?.closest('.cm-line');
+        if (!line || !selection) return null;
+        const range = document.createRange();
+        range.setStart(line, 0);
+        range.setEnd(selection.anchorNode!, selection.anchorOffset);
+        return range.toString();
+      }),
+    )
+    .toBe('== ');
+});
+
+test('shows the unsaved outline and ignores heading-like text in raw blocks', async ({
+  page,
+}, info) => {
+  const { server, text } = await installWorkspace(page);
+  text.set(100, '= Збережений заголовок');
+  await page.route('**/api/projects/1/outline?*', (route) =>
+    route.fulfill({ status: 503, json: { error: { code: 'EDITOR_UNAVAILABLE' } } }),
+  );
+  let releaseSave!: () => void;
+  const holdSave = new Promise<void>((resolve) => {
+    releaseSave = resolve;
+  });
+  await page.route('**/api/projects/1/changes', async (route) => {
+    await holdSave;
+    await route.fallback();
+  });
+  try {
+    await page.goto('/projects/1');
+    const editor = page.getByRole('textbox', { name: 'Вихідний текст' });
+    const openOutline = async () => {
+      await page
+        .getByRole('button', {
+          name: info.project.name === 'mobile' ? 'Меню' : 'Вигляд',
+          exact: true,
+        })
+        .click();
+      await page.getByRole('menuitem', { name: 'Структура документа…' }).click();
+    };
+    const outline = page.getByRole('dialog', { name: 'Структура документа' });
+    await openOutline();
+    await expect(outline.getByRole('button', { name: 'Збережений заголовок' })).toBeVisible();
+    await outline.getByRole('button', { name: 'Закрити' }).click();
+    await expect(outline).toBeHidden();
+    await editor.fill('= Моя чернетка\n```typ\n= Приклад коду\n```\n== Підрозділ');
+    await openOutline();
+    await expect(outline.getByRole('button', { name: 'Моя чернетка' })).toBeVisible();
+    await expect(outline.getByRole('button', { name: 'Приклад коду' })).toHaveCount(0);
+    await outline.getByRole('button', { name: 'Підрозділ' }).click();
+    await expect(outline).toBeHidden();
+    await expect(editor).toBeFocused();
+    expect(server.saveCount).toBe(0);
+  } finally {
+    releaseSave();
+  }
+});
+
 test('previews unsaved Typst edits while keeping the accepted PDF available', async ({ page }) => {
   const { server } = await installWorkspace(page);
   let releaseSave!: () => void;
@@ -329,14 +461,31 @@ test('previews unsaved Typst edits while keeping the accepted PDF available', as
     await expect(canvas).toBeVisible();
     const beforeError = await canvas.evaluate((element: HTMLCanvasElement) => element.toDataURL());
     if (compact) await page.getByRole('button', { name: 'Лише код', exact: true }).click();
-    await editor.fill('#let broken =');
-    if (compact) await preview.click();
+    await editor.fill('Привіт 😃 #oops');
     const diagnostics = page.getByRole('region', { name: 'Діагностика компіляції' });
     await expect(diagnostics).toContainText('Чернетка');
+    const sourceLink = diagnostics.getByRole('button', { name: 'main.typ:1:12' });
+    await expect(sourceLink).toBeVisible();
+    if (compact) await preview.click();
     await expect(draft).toBeVisible();
     expect(await canvas.evaluate((element: HTMLCanvasElement) => element.toDataURL())).toBe(
       beforeError,
     );
+    await sourceLink.click();
+    await expect(editor).toBeFocused();
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const selection = window.getSelection();
+          const line = selection?.anchorNode?.parentElement?.closest('.cm-line');
+          if (!line || !selection) return null;
+          const range = document.createRange();
+          range.setStart(line, 0);
+          range.setEnd(selection.anchorNode!, selection.anchorOffset);
+          return range.toString();
+        }),
+      )
+      .toBe('Привіт 😃 #');
     expect(server.head).toBe(100);
     expect(server.saveCount).toBe(0);
   } finally {

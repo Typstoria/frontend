@@ -325,7 +325,7 @@ export function createWorkspaceModel(projectId: number, api: WorkspaceApi, delay
     const moves = structure.filter(
       (operation) => operation.type === 'renameFile' || operation.type === 'renameDirectory',
     );
-    const { createReferenceParser, movedProjectPaths, rewriteTypstReferences } =
+    const { createTypstParser, movedProjectPaths, rewriteTypstReferences } =
       await import('./typst-references');
     const paths = movedProjectPaths(snapshot.tree, moves);
     const rewrites = new Map<number, { before: string; after: string }>();
@@ -333,7 +333,7 @@ export function createWorkspaceModel(projectId: number, api: WorkspaceApi, delay
     const sources = typstSources(snapshot);
     const unloaded = sources.filter((file) => !state.files[file.fileId]);
     const contents = new Map<number, string>();
-    const parser = await createReferenceParser();
+    const parser = await createTypstParser();
     try {
       for (let i = 0; i < unloaded.length; i += 6) {
         await Promise.all(
@@ -376,9 +376,9 @@ export function createWorkspaceModel(projectId: number, api: WorkspaceApi, delay
     )
       return;
 
-    const { createReferenceParser, movedProjectPaths, rewriteTypstReferences } =
+    const { createTypstParser, movedProjectPaths, rewriteTypstReferences } =
       await import('./typst-references');
-    const parser = await createReferenceParser();
+    const parser = await createTypstParser();
     try {
       if (!active) return;
       const paths = movedProjectPaths(snapshot.tree, moves);

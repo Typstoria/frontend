@@ -2,14 +2,14 @@ import type { components } from '../../shared/api/schema';
 import { validId } from './workspace-api';
 
 export type Diagnostic = components['schemas']['CompileDiagnosticDto'];
-type Position = components['schemas']['DiagnosticPositionDto'];
+export type Position = components['schemas']['DiagnosticPositionDto'];
 
 const record = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null;
 const coordinate = (value: unknown): value is number =>
   typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 
-function isPosition(value: unknown): value is Position {
+export function isPosition(value: unknown): value is Position {
   return record(value) && coordinate(value.line) && coordinate(value.character);
 }
 

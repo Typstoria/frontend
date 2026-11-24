@@ -28,6 +28,9 @@ export async function installWorkspaceStartupMock(
   revisionId = 100,
   revisionNumber = revisionId - 99,
 ) {
+  await page.route('**/api/editor/availability', (route) =>
+    route.fulfill({ json: { available: false } }),
+  );
   const expiresAt = new Date(Date.now() + 600_000).toISOString();
   const accepted = {
     id: 900,

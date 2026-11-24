@@ -784,3 +784,33 @@
     padding-left: 16px;
   }
 }
+
+.workspace-language-feedback {
+  flex-shrink: 0;
+  margin: 0;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-muted);
+  font-size: 13px;
+}
+
+.workspace-definition-list {
+  display: grid;
+  gap: 6px;
+  max-height: 45dvh;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.workspace-definition-list .button {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 12px;
+  width: 100%;
+  min-height: 44px;
+  text-align: start;
+  overflow-wrap: anywhere;
+}
