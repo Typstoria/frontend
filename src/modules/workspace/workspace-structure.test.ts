@@ -37,6 +37,7 @@ const snapshot = (
   tree,
   mainFileId,
   contextText: '',
+  materials: [],
 });
 const result = (revisionId = 11): SaveResult => ({
   projectId: 1,

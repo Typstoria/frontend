@@ -31,6 +31,7 @@ const snapshot = (revision = 10): Snapshot => ({
   },
   mainFileId: 1,
   contextText: '',
+  materials: [],
   tree: [meta(1), meta(2)],
 });
 const result = (revisionId = 11): SaveResult => ({

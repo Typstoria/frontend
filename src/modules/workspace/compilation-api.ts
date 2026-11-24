@@ -1,10 +1,11 @@
 import { ApiError, type RequestOptions } from '../../shared/api/client';
 import type { components } from '../../shared/api/schema';
 import { validId } from './workspace-api';
+import { isDiagnostic } from './compilation-diagnostics';
+export type { Diagnostic } from './compilation-diagnostics';
 
 // This workspace compiles accepted revisions; proposal previews use a separate flow.
 export type Compilation = components['schemas']['CompilationDto'] & { revisionId: number };
-export type Diagnostic = components['schemas']['CompileDiagnosticDto'];
 export type StartupCompilation = { job: Compilation; revisionNumber: number };
 type Request = (path: string, options?: Omit<RequestOptions, 'accessToken'>) => Promise<unknown>;
 const statuses = ['queued', 'running', 'succeeded', 'failed', 'timed_out', 'cancelled'];
@@ -36,21 +37,10 @@ function parseJob(value: unknown, projectId: number, revisionId: number, jobId?:
     !(value.startedAt === null || date(value.startedAt)) ||
     !(value.finishedAt === null || date(value.finishedAt)) ||
     !Array.isArray(value.diagnostics) ||
-    value.diagnostics.length > 100
+    value.diagnostics.length > 100 ||
+    !value.diagnostics.every((item) => isDiagnostic(item) && item.message.length <= 2000)
   )
     invalid();
-  for (const diagnostic of value.diagnostics) {
-    if (
-      !record(diagnostic) ||
-      !(diagnostic.fileId === null || validId(diagnostic.fileId)) ||
-      !(diagnostic.path === null || typeof diagnostic.path === 'string') ||
-      !['error', 'warning'].includes(String(diagnostic.severity)) ||
-      typeof diagnostic.message !== 'string' ||
-      diagnostic.message.length > 2000 ||
-      diagnostic.range !== null
-    )
-      invalid();
-  }
   return value as Compilation;
 }
 

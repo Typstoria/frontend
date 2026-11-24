@@ -1,4 +1,5 @@
 import type { Snapshot, StructureChange } from './workspace-api';
+import { isMaterialChange } from './workspace-api';
 import { filePathError, inFolder, normalizeFilePath, projectFolders } from './file-path';
 import { matchesResourceType } from './resource-formats';
 
@@ -10,6 +11,7 @@ export function structureError(operations: readonly StructureChange[], snapshot:
   let mainPath: string | undefined;
   let temporaryId = -1;
   for (const operation of operations) {
+    if (isMaterialChange(operation)) continue;
     if (operation.type === 'createFile' || operation.type === 'attachFile') {
       files.push({
         fileId: temporaryId--,

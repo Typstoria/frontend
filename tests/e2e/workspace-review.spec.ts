@@ -180,7 +180,7 @@ async function installSession(page: Page) {
                     path: 'main.typ',
                     severity: 'error',
                     message: 'Незакриті дужки',
-                    range: null,
+                    range: { start: { line: 1, character: 2 }, end: { line: 1, character: 2 } },
                   },
                 ]
               : [],
@@ -206,7 +206,7 @@ async function installSession(page: Page) {
                     path: 'main.typ',
                     severity: 'error',
                     message: 'Незакриті дужки',
-                    range: null,
+                    range: { start: { line: 1, character: 2 }, end: { line: 1, character: 2 } },
                   },
                 ]
               : [],
@@ -342,6 +342,7 @@ test('requires explicit acknowledgement for a Typst error', async ({ page }) => 
   await openReview(page);
   await page.getByRole('button', { name: 'Перевірити', exact: true }).click();
   await expect(page.getByText('Незакриті дужки')).toBeVisible();
+  await expect(page.getByText('main.typ:2:3')).toBeVisible();
   await page.getByRole('button', { name: 'Прийняти пропозицію', exact: true }).click();
   await expect(page.getByRole('checkbox', { name: /Я розумію/i })).toBeVisible();
   const confirm = page.getByRole('button', { name: 'Прийняти попри помилку', exact: true });
@@ -354,6 +355,107 @@ test('requires explicit acknowledgement for a Typst error', async ({ page }) => 
   ).toBeVisible();
   expect(acceptCalls).toBe(1);
   expect(rejectCalls).toBe(0);
+});
+
+test('reviews proposed materials and comments and blocks resolution of an edited comment', async ({
+  page,
+}, testInfo) => {
+  await installSession(page);
+  const material = {
+    materialId: 8,
+    versionId: 8,
+    name: 'Джерела.txt',
+    sha256: hash,
+    sizeBytes: 6,
+    mediaType: 'text/plain',
+  };
+  const anchor = { fileId: 10, start: 2, end: 7, quote: 'Вступ', prefix: '= ', suffix: '' };
+  const operations = [
+    { type: 'createAnnotation', anchor, body: 'Додати джерело до вступу.' },
+    { type: 'resolveAnnotation', annotationId: 23, expectedAnnotationVersion: 2 },
+  ];
+  let version = 2;
+  await page.route('**/api/projects/1/annotations?*', (route) =>
+    route.fulfill({
+      json: {
+        nextCursor: null,
+        items: [
+          {
+            id: 23,
+            projectId: 1,
+            viewedRevisionId: 100,
+            version,
+            anchor,
+            body: 'Джерело вже перевірено.',
+            status: 'active',
+          },
+        ],
+      },
+    }),
+  );
+  await page.route('**/api/projects/1/proposals/44/candidate?*', (route) =>
+    route.fulfill({
+      json: {
+        ...candidate,
+        materials: [material],
+        operations: [{ type: 'attachMaterial', versionId: 8 }, ...operations],
+      },
+    }),
+  );
+  await page.route('**/api/projects/1/proposals/44/diff?*', (route) =>
+    route.fulfill({
+      json: {
+        ...diff,
+        files: [],
+        materials: [{ materialId: 8, change: 'added', before: null, after: material }],
+        annotationOperations: operations,
+      },
+    }),
+  );
+  await page.route('**/api/projects/1/proposals/44/materials/8/download?*', (route) => {
+    expect(new URL(route.request().url()).searchParams.get('version')).toBe('3');
+    expect(route.request().headers().authorization).toBe('Bearer 1.review-test-secret');
+    return route.fulfill({ contentType: 'application/octet-stream', body: 'source' });
+  });
+  await page.route('**/api/projects/1/proposals/44/validate', (route) =>
+    route.fulfill({
+      json: {
+        id: 61,
+        proposalId: 44,
+        candidateVersion: 3,
+        candidateManifestHash: hash,
+        status: 'not_required',
+        compileJobId: null,
+        errorCode: null,
+        diagnostics: [],
+        createdAt: now,
+      },
+    }),
+  );
+  await page.goto('/projects/1/proposals/44');
+  await expect(page.getByText('Додати джерело до вступу.')).toBeVisible();
+  await expect(page.getByText('Джерело вже перевірено.')).toBeVisible();
+  await expect(page.getByText('У пропозиції немає змін.')).toHaveCount(0);
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    page.getByRole('button', { name: 'Завантажити запропонований матеріал Джерела.txt' }).click(),
+  ]);
+  expect(download.suggestedFilename()).toBe('Джерела.txt');
+  const validate = page.getByRole('button', { name: 'Перевірити', exact: true });
+  const accept = page.getByRole('button', { name: 'Прийняти пропозицію', exact: true });
+  await validate.click();
+  await expect(accept).toBeEnabled();
+  await page.getByRole('region', { name: 'Зміни матеріалів' }).scrollIntoViewIfNeeded();
+  await page.screenshot({ path: testInfo.outputPath('review-materials-annotations.png') });
+
+  version = 3;
+  await page.reload();
+  await expect(
+    page.getByText('Коментар змінився або його видалено.', { exact: false }),
+  ).toBeVisible();
+  await validate.click();
+  await expect(page.getByText('Компіляція не потрібна', { exact: true })).toBeVisible();
+  await expect(accept).toBeDisabled();
 });
 
 test('retries an unconfirmed acceptance with the same key', async ({ page }) => {

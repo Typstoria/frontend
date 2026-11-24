@@ -37,7 +37,8 @@ const statusText: Record<OAuthConnection['status'], string> = {
 const scopeText: Record<OAuthScope, string> = {
   'projects:read': 'Перегляд проєктів',
   'documents:read': 'Перегляд документів і файлів',
-  'context:read': 'Перегляд контексту проєкту',
+  'context:read': 'Перегляд контексту й матеріалів проєкту',
+  'annotations:read': 'Перегляд анотацій',
   'history:read': 'Перегляд історії версій',
   'changes:read': 'Перегляд пропозицій змін',
   'changes:propose': 'Створення пропозицій змін',

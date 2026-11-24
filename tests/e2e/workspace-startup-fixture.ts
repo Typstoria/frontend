@@ -48,6 +48,9 @@ export async function installWorkspaceStartupMock(
     startedAt: createdAt,
     finishedAt: createdAt,
   };
+  await page.route('**/api/projects/1/annotations?*', (route) =>
+    route.fulfill({ json: { items: [], nextCursor: null } }),
+  );
   await page.route('**/api/projects/1/compilations/latest-pdf', (route) =>
     route.fulfill({ json: { job: accepted, revisionNumber } }),
   );

@@ -19,6 +19,9 @@ const loginResponse = () => ({
 
 test.beforeEach(async ({ page }) => {
   await page.route('**/api/auth/me', (route) => route.fulfill({ json: user }));
+  await page.route('**/api/access/oauth', (route) =>
+    route.fulfill({ json: { enabled: false, url: null } }),
+  );
   await page.route('**/api/projects?*', (route) =>
     route.fulfill({ json: { items: [], nextCursor: null } }),
   );

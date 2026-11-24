@@ -514,15 +514,16 @@
   flex: 1;
   flex-direction: column;
   min-height: 0;
+  overflow: auto;
 }
-.workspace-context label {
+.workspace-context > label {
   padding: 10px 16px;
   border-bottom: 1px solid var(--color-border);
   font-size: 13px;
   font-weight: 600;
 }
-.workspace-context textarea {
-  flex: 1;
+.workspace-context > textarea {
+  flex: 0 0 clamp(9rem, 28dvh, 15rem);
   min-height: 0;
   resize: none;
   border: 0;
@@ -531,7 +532,7 @@
   color: var(--color-text);
   font: 16px/1.6 var(--font-ui);
 }
-.workspace-context textarea:focus-visible {
+.workspace-context > textarea:focus-visible {
   outline-offset: -3px;
 }
 @media (max-width: 720px) {
@@ -591,6 +592,54 @@
 }
 .editor-layout.editor-with-output.editor-without-files {
   grid-template-columns: var(--editor-code-width) 6px minmax(0, 1fr);
+}
+.editor-layout.editor-with-comments {
+  grid-template-columns: var(--editor-file-width) 6px minmax(0, 1fr) var(--editor-comments-width);
+}
+.editor-layout.editor-with-comments.editor-without-files {
+  grid-template-columns: minmax(0, 1fr) var(--editor-comments-width);
+}
+.editor-layout.editor-with-output.editor-with-comments {
+  grid-template-columns:
+    var(--editor-file-width) 6px var(--editor-code-width) var(--editor-comments-width) 6px
+    minmax(0, 1fr);
+}
+.editor-layout.editor-with-output.editor-with-comments.editor-without-files {
+  grid-template-columns: var(--editor-code-width) var(--editor-comments-width) 6px minmax(0, 1fr);
+}
+#workspace-annotation-side,
+.workspace-comments-panel {
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+.workspace-comments-panel {
+  border-inline-start: 1px solid var(--color-border);
+  background: #f8fafc;
+}
+.modal-dialog.workspace-comments-modal[open] {
+  display: flex;
+  flex-direction: column;
+  width: 100vw;
+  height: 100dvh;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  overflow: hidden;
+}
+.workspace-comments-modal > h2 {
+  margin: 0;
+  padding: 14px 58px 14px 16px;
+  border-bottom: 1px solid var(--color-border);
+  font-size: 16px;
+}
+.workspace-comments-modal .comments-head {
+  position: absolute;
+  top: 5px;
+  right: 8px;
 }
 .workspace-output {
   display: flex;

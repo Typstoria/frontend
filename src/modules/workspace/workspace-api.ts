@@ -4,14 +4,17 @@ import type { components } from '../../shared/api/schema';
 import { parseProject } from '../projects/projects-api';
 import { matchesResourceType, maxResourceBytes } from './resource-formats';
 import { filePathError } from './file-path';
+import { parseMaterials } from './material-metadata';
 
 export type Snapshot = Omit<components['schemas']['ProjectStateDto'], 'directories'> & {
   directories?: string[];
 };
 export type TextFile = components['schemas']['ProjectTextFileDto'];
-export type TextChange = components['schemas']['UpdateTextDto'];
-export type ContextChange = components['schemas']['UpdateContextDto'];
-export type StructureChange =
+export type MaterialChange =
+  | components['schemas']['AttachMaterialDto']
+  | components['schemas']['ReplaceMaterialDto']
+  | components['schemas']['RemoveMaterialDto'];
+type TreeChange =
   | components['schemas']['CreateTextFileDto']
   | components['schemas']['RenameFileDto']
   | components['schemas']['DeleteFileDto']
@@ -21,8 +24,17 @@ export type StructureChange =
   | components['schemas']['CreateDirectoryDto']
   | components['schemas']['RenameDirectoryDto']
   | components['schemas']['DeleteDirectoryDto'];
-export type FileChange = TextChange | ContextChange | StructureChange;
-export type Changes = { baseRevisionId: number; operations: FileChange[] };
+export type StructureChange = TreeChange | MaterialChange;
+export function isMaterialChange(
+  operation: Changes['operations'][number],
+): operation is MaterialChange {
+  return (
+    operation.type === 'attachMaterial' ||
+    operation.type === 'replaceMaterial' ||
+    operation.type === 'removeMaterial'
+  );
+}
+export type Changes = components['schemas']['ProjectChangesDto'];
 export type SaveResult = components['schemas']['ProjectChangesResultDto'];
 export type ProjectUpload = components['schemas']['ProjectUploadDto'];
 type Request = (path: string, options?: Omit<RequestOptions, 'accessToken'>) => Promise<unknown>;
@@ -94,6 +106,7 @@ export function parseSnapshot(v: unknown, projectId: number): Snapshot {
     project,
     mainFileId: v.mainFileId,
     contextText: v.contextText,
+    materials: parseMaterials(v.materials),
     directories,
     tree,
     revision: {
@@ -122,7 +135,7 @@ export function parseText(v: unknown, fileId: number, revisionId: number): TextF
 export function parseSaved(
   v: unknown,
   projectId: number,
-  operations?: readonly FileChange[],
+  operations?: readonly Changes['operations'][number][],
 ): SaveResult {
   if (
     !record(v) ||

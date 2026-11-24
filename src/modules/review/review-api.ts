@@ -1,26 +1,34 @@
 import { ApiError } from '../../shared/api/client';
 import type { RequestOptions } from '../../shared/api/client';
 import type { components } from '../../shared/api/schema';
-import type { FileChange } from '../workspace/workspace-api';
+import { isDiagnostic } from '../workspace/compilation-diagnostics';
+import { parseMaterialDiffs, parseMaterials, type Material } from '../workspace/material-metadata';
 import { validId } from '../workspace/workspace-api';
 
 export type Proposal = components['schemas']['ProposalDto'];
 export type ProposalList = components['schemas']['ProposalListDto'];
-export type ProposalCandidate = Omit<
-  components['schemas']['ProposalCandidateDto'],
-  'operations'
-> & {
-  operations: FileChange[];
-};
+export type ProposalCandidate = components['schemas']['ProposalCandidateDto'];
+type Operation = ProposalCandidate['operations'][number];
+export type AnnotationOperation = Extract<
+  Operation,
+  { type: 'createAnnotation' | 'resolveAnnotation' }
+>;
+type Annotation = components['schemas']['AnnotationDto'];
+export type ReviewAnnotation = Pick<Annotation, 'id' | 'version' | 'anchor' | 'body' | 'status'>;
 export type ProposalTextFile = components['schemas']['ProposalTextFileDto'];
-export type ProposalDiff = components['schemas']['ProposalDiffDto'];
+export type ProposalDiff = Omit<
+  components['schemas']['ProposalDiffDto'],
+  'annotationOperations'
+> & {
+  annotationOperations: AnnotationOperation[];
+};
 export type ProposalValidation = components['schemas']['ProposalValidationDto'];
 export type ProposalAccepted = components['schemas']['ProposalAcceptedDto'];
 export type AcceptProposalInput = components['schemas']['AcceptProposalDto'];
 export type RebaseProposalInput = {
   expectedProposalVersion: number;
   baseRevisionId: number;
-  operations: FileChange[];
+  operations: Operation[];
   summary?: string;
 };
 
@@ -31,9 +39,64 @@ const record = (value: unknown): value is RecordValue =>
   typeof value === 'object' && value !== null;
 const hash = (value: unknown): value is string =>
   typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
+const fileOperations: ReadonlySet<string> = new Set([
+  'createFile',
+  'updateText',
+  'renameFile',
+  'deleteFile',
+  'setEntrypoint',
+  'updateContext',
+  'attachFile',
+  'replaceFile',
+  'createDirectory',
+  'renameDirectory',
+  'deleteDirectory',
+]);
 
 function invalid(): never {
   throw new ApiError(200, 'INVALID_RESPONSE', 'Некоректна відповідь сервера.', null);
+}
+
+function isAnchor(value: unknown): value is Annotation['anchor'] {
+  return (
+    record(value) &&
+    validId(value.fileId) &&
+    typeof value.start === 'number' &&
+    Number.isSafeInteger(value.start) &&
+    value.start >= 0 &&
+    typeof value.end === 'number' &&
+    Number.isSafeInteger(value.end) &&
+    value.end <= 1048576 &&
+    typeof value.quote === 'string' &&
+    value.quote.length > 0 &&
+    value.end - value.start === value.quote.length &&
+    typeof value.prefix === 'string' &&
+    typeof value.suffix === 'string'
+  );
+}
+
+function isAnnotationOperation(value: unknown): value is AnnotationOperation {
+  if (!record(value)) return false;
+  if (value.type === 'createAnnotation')
+    return isAnchor(value.anchor) && typeof value.body === 'string' && value.body.length > 0;
+  return (
+    value.type === 'resolveAnnotation' &&
+    validId(value.annotationId) &&
+    validId(value.expectedAnnotationVersion)
+  );
+}
+
+function isOperation(value: unknown): boolean {
+  if (!record(value) || typeof value.type !== 'string') return false;
+  if (fileOperations.has(value.type)) return true;
+  if (value.type === 'removeMaterial') return validId(value.materialId);
+  if (value.type === 'attachMaterial' || value.type === 'replaceMaterial')
+    return (
+      validId(value.versionId) &&
+      (value.type === 'attachMaterial' || validId(value.materialId)) &&
+      (value.name === undefined || (typeof value.name === 'string' && value.name.trim().length > 0))
+    );
+  return isAnnotationOperation(value);
 }
 
 function parseProposal(value: unknown, projectId: number, proposalId?: number): Proposal {
@@ -86,20 +149,10 @@ function parseValidation(
     !hash(value.candidateManifestHash) ||
     typeof value.createdAt !== 'string' ||
     !Number.isFinite(Date.parse(value.createdAt)) ||
-    !Array.isArray(value.diagnostics)
+    !Array.isArray(value.diagnostics) ||
+    !value.diagnostics.every(isDiagnostic)
   )
     invalid();
-  for (const diagnostic of value.diagnostics) {
-    if (
-      !record(diagnostic) ||
-      !(diagnostic.fileId === null || validId(diagnostic.fileId)) ||
-      !(diagnostic.path === null || typeof diagnostic.path === 'string') ||
-      typeof diagnostic.message !== 'string' ||
-      !['error', 'warning'].includes(String(diagnostic.severity)) ||
-      diagnostic.range !== null
-    )
-      invalid();
-  }
   return value as ProposalValidation;
 }
 
@@ -139,23 +192,7 @@ function parseCandidate(
     !Array.isArray(directories) ||
     directories.some((path) => typeof path !== 'string' || path.length === 0) ||
     !Array.isArray(value.operations) ||
-    value.operations.some(
-      (operation) =>
-        !record(operation) ||
-        ![
-          'createFile',
-          'updateText',
-          'renameFile',
-          'deleteFile',
-          'setEntrypoint',
-          'updateContext',
-          'attachFile',
-          'replaceFile',
-          'createDirectory',
-          'renameDirectory',
-          'deleteDirectory',
-        ].includes(String(operation.type)),
-    )
+    !value.operations.every(isOperation)
   )
     invalid();
   const tree = value.tree.map(parseFile);
@@ -166,13 +203,20 @@ function parseCandidate(
     !tree.some((file) => file.fileId === value.mainFileId && file.contentKind === 'text')
   )
     invalid();
-  return { ...value, tree, directories } as ProposalCandidate;
+  return {
+    ...value,
+    tree,
+    directories,
+    materials: parseMaterials(value.materials),
+  } as ProposalCandidate;
 }
 
 function parseDiff(value: unknown, proposalId: number, candidateVersion?: number): ProposalDiff {
   if (!record(value)) invalid();
   const directories =
     value.directories === undefined ? { added: [], deleted: [] } : value.directories;
+  const annotationOperations =
+    value.annotationOperations === undefined ? [] : value.annotationOperations;
   if (
     value.proposalId !== proposalId ||
     !validId(value.baseRevisionId) ||
@@ -180,6 +224,8 @@ function parseDiff(value: unknown, proposalId: number, candidateVersion?: number
     (candidateVersion !== undefined && value.candidateVersion !== candidateVersion) ||
     !hash(value.candidateManifestHash) ||
     !Array.isArray(value.files) ||
+    !Array.isArray(annotationOperations) ||
+    !annotationOperations.every(isAnnotationOperation) ||
     !record(directories) ||
     !Array.isArray(directories.added) ||
     !Array.isArray(directories.deleted) ||
@@ -213,7 +259,12 @@ function parseDiff(value: unknown, proposalId: number, candidateVersion?: number
       if (side !== null && parseFile(side).fileId !== file.fileId) invalid();
     }
   }
-  return { ...value, directories } as ProposalDiff;
+  return {
+    ...value,
+    directories,
+    materials: parseMaterialDiffs(value.materials),
+    annotationOperations,
+  } as ProposalDiff;
 }
 
 function validateIds(...ids: number[]): void {
@@ -329,6 +380,80 @@ export function createReviewApi(request: Request) {
       );
       if (!(blob instanceof Blob)) invalid();
       return blob;
+    },
+    async downloadMaterial(
+      projectId: number,
+      proposal: Proposal,
+      material: Material,
+      side: 'before' | 'after',
+      signal: AbortSignal,
+    ) {
+      validateIds(
+        projectId,
+        proposal.id,
+        proposal.version,
+        proposal.baseRevisionId,
+        material.materialId,
+      );
+      const base = `/projects/${projectId}`;
+      const path = `/materials/${material.materialId}/download`;
+      const blob = await request(
+        side === 'after' ? `${base}/proposals/${proposal.id}${path}` : `${base}${path}`,
+        {
+          query:
+            side === 'after'
+              ? { version: proposal.version }
+              : { revisionId: proposal.baseRevisionId },
+          responseType: 'blob',
+          signal,
+        },
+      );
+      if (!(blob instanceof Blob) || blob.size !== material.sizeBytes) invalid();
+      return blob;
+    },
+    async annotations(projectId: number, revisionId: number, ids: number[], signal: AbortSignal) {
+      validateIds(projectId, revisionId, ...ids);
+      const pending = new Set(ids);
+      const annotations = new Map<number, ReviewAnnotation>();
+      let cursor: number | null = null;
+      while (pending.size && !signal.aborted) {
+        const page: unknown = await request(`/projects/${projectId}/annotations`, {
+          query: { revisionId, limit: 100, ...(cursor === null ? {} : { cursor }) },
+          signal,
+        });
+        if (
+          !record(page) ||
+          !Array.isArray(page.items) ||
+          !(
+            page.nextCursor === null ||
+            (validId(page.nextCursor) && (cursor === null || page.nextCursor < cursor))
+          )
+        )
+          invalid();
+        for (const item of page.items) {
+          if (!record(item) || !validId(item.id)) invalid();
+          if (!pending.delete(item.id)) continue;
+          if (
+            item.projectId !== projectId ||
+            item.viewedRevisionId !== revisionId ||
+            !validId(item.version) ||
+            !isAnchor(item.anchor) ||
+            typeof item.body !== 'string' ||
+            (item.status !== 'active' && item.status !== 'resolved')
+          )
+            invalid();
+          annotations.set(item.id, {
+            id: item.id,
+            version: item.version,
+            anchor: item.anchor,
+            body: item.body,
+            status: item.status,
+          });
+        }
+        cursor = page.nextCursor;
+        if (cursor === null) break;
+      }
+      return annotations;
     },
     async validate(projectId: number, proposal: Proposal, signal: AbortSignal) {
       validateIds(projectId, proposal.id, proposal.version);

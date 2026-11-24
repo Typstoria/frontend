@@ -14,6 +14,7 @@ const scopes: OAuthScope[] = [
   'projects:read',
   'documents:read',
   'context:read',
+  'annotations:read',
   'history:read',
   'changes:read',
   'changes:propose',

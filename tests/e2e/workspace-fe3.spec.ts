@@ -802,7 +802,7 @@ test('opens diagnostics in the source and preserves the editor after a Typst err
             path: 'main.typ',
             severity: 'error',
             message: 'unclosed delimiter',
-            range: null,
+            range: { start: { line: 0, character: 3 }, end: { line: 0, character: 3 } },
           },
         ],
       }),
@@ -821,9 +821,10 @@ test('opens diagnostics in the source and preserves the editor after a Typst err
   await expect(diagnostics).toBeVisible();
   await page
     .getByRole('region', { name: 'Діагностика компіляції' })
-    .getByRole('button', { name: 'main.typ', exact: true })
+    .getByRole('button', { name: 'main.typ:1:4', exact: true })
     .click();
   await expect(page.getByRole('textbox', { name: 'Вихідний текст' })).toContainText('Original');
+  await expect.poll(() => page.evaluate(() => window.getSelection()?.anchorOffset)).toBe(3);
   await expect(page.getByText('TYPST_ERROR')).toHaveCount(0);
 });
 
@@ -873,6 +874,47 @@ test('closes the history dialog with Escape and returns to the same PDF position
   await expect(zoom).toHaveText(scale ?? '');
   await expect.poll(() => frame.evaluate((element) => element.scrollTop)).toBe(top);
   await expect(page.locator('.pdf-page-indicator')).toHaveText('2 / 2');
+});
+
+test('shows changes to materials in the revision history', async ({ page }, testInfo) => {
+  await installWorkspace(page, 101);
+  await page.route('**/api/projects/1/revisions/*/diff?*', (route) =>
+    route.fulfill({
+      json: {
+        fromRevisionId: 100,
+        toRevisionId: 101,
+        fromHistorySyncStatus: 'ready',
+        toHistorySyncStatus: 'ready',
+        files: [],
+        materials: [
+          {
+            materialId: 41,
+            change: 'added',
+            before: null,
+            after: {
+              materialId: 41,
+              versionId: 41,
+              name: 'Джерела.csv',
+              sha256: hash,
+              sizeBytes: 16,
+              mediaType: 'text/csv',
+            },
+          },
+        ],
+        directories: { added: [], deleted: [] },
+        context: { changed: false, patch: null, patchOmittedReason: null },
+        entrypoint: { changed: false, beforeFileId: 10, afterFileId: 10 },
+      },
+    }),
+  );
+  await page.goto('/projects/1/history');
+  const dialog = page.getByRole('dialog', { name: 'Історія версій' });
+  await dialog.getByRole('button', { name: /^Версія 1/ }).click();
+  await expect(dialog.getByRole('region', { name: 'Зміни матеріалів' })).toContainText(
+    'Джерела.csv',
+  );
+  await expect(dialog.getByText('У цих версіях немає змін.')).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath('history-materials.png') });
 });
 
 test('retries an ambiguous restore with the same key and reloads cached source', async ({

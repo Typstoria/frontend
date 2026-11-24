@@ -753,7 +753,9 @@ test('shows a sanitized missing-project state and keeps the workspace within des
   await arrived;
   await expect(page.getByRole('status')).toContainText('Завантаження проєкту');
   release();
-  await expect(page.getByRole('alert')).toContainText('Проєкт або файл недоступний');
+  await expect(page.getByRole('alert')).toContainText('Проєкт недоступний');
+  await expect(page.getByRole('button', { name: 'Повторити', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('link', { name: 'До проєктів' })).toBeVisible();
   await expect(page.locator('body')).not.toContainText('workspace-private-request');
   await expect(page.locator('body')).not.toContainText('private internal details');
   const overflow = await page.evaluate(

@@ -13,6 +13,8 @@ import { identitySession } from '../identity/identity-session';
 import { ApiError } from '../../shared/api/client';
 import ModalDialog from '../../shared/ui/ModalDialog.vue';
 import { createWorkspaceApi, validId } from '../workspace/workspace-api';
+import { diagnosticSource } from '../workspace/compilation-diagnostics';
+import type { Material } from '../workspace/material-metadata';
 import ReviewChanges from './ReviewChanges.vue';
 import {
   createReviewApi,
@@ -20,6 +22,7 @@ import {
   type ProposalCandidate,
   type ProposalDiff,
   type ProposalValidation,
+  type ReviewAnnotation,
 } from './review-api';
 import type { components } from '../../shared/api/schema';
 
@@ -52,6 +55,9 @@ const proposal = shallowRef<Proposal | null>(null);
 const candidate = shallowRef<ProposalCandidate | null>(null);
 const baseNumber = ref<number | null>(null);
 const diff = shallowRef<ProposalDiff | null>(null);
+const annotations = shallowRef(new Map<number, ReviewAnnotation>());
+const annotationsLoading = ref(false);
+const annotationsError = ref('');
 const loadingDetail = ref(false);
 const detailError = ref('');
 const validation = shallowRef<ProposalValidation | null>(null);
@@ -98,12 +104,22 @@ const stale = computed(
 const active = computed(() => !!proposal.value && proposal.value.status === 'draft');
 const monitoring = ref(false);
 const waiting = computed(() => ['queued', 'running'].includes(validation.value?.status ?? ''));
+const annotationConflict = computed(
+  () =>
+    diff.value?.annotationOperations.some(
+      (op) =>
+        op.type === 'resolveAnnotation' &&
+        annotations.value.get(op.annotationId)?.version !== op.expectedAnnotationVersion,
+    ) ?? false,
+);
 const canAccept = computed(
   () =>
     active.value &&
     props.canDecide &&
     !stale.value &&
     !busy.value &&
+    !annotationsLoading.value &&
+    !annotationConflict.value &&
     !!diff.value &&
     !!candidate.value &&
     !!validation.value &&
@@ -172,6 +188,9 @@ async function loadDetail(id: number | null, focus = false) {
   candidate.value = null;
   baseNumber.value = null;
   diff.value = null;
+  annotations.value = new Map();
+  annotationsLoading.value = false;
+  annotationsError.value = '';
   validation.value = null;
   monitoring.value = false;
   pdf.value = null;
@@ -214,12 +233,19 @@ async function loadDetail(id: number | null, focus = false) {
       !sameCandidate(snapshot, item) ||
       changes.baseRevisionId !== item.baseRevisionId ||
       snapshot.baseRevisionId !== item.baseRevisionId ||
-      snapshot.candidateSnapshotId !== item.candidateSnapshotId
+      snapshot.candidateSnapshotId !== item.candidateSnapshotId ||
+      JSON.stringify(changes.annotationOperations) !==
+        JSON.stringify(
+          snapshot.operations.filter(
+            (op) => op.type === 'createAnnotation' || op.type === 'resolveAnnotation',
+          ),
+        )
     )
       throw new Error('Proposal candidate mismatch');
     proposal.value = item;
     candidate.value = snapshot;
     diff.value = changes;
+    void loadAnnotations(item, changes, signal);
     remember(item);
     if (item.baseRevisionId === props.headId) baseNumber.value = props.headNumber;
     else
@@ -235,6 +261,23 @@ async function loadDetail(id: number | null, focus = false) {
     if (!signal.aborted) detailError.value = errorText(error, 'Не вдалося завантажити зміни.');
   } finally {
     if (!signal.aborted) loadingDetail.value = false;
+  }
+}
+
+async function loadAnnotations(item: Proposal, changes: ProposalDiff, signal: AbortSignal) {
+  const ids = changes.annotationOperations.flatMap((op) =>
+    op.type === 'resolveAnnotation' ? [op.annotationId] : [],
+  );
+  if (!ids.length) return;
+  annotationsLoading.value = true;
+  annotationsError.value = '';
+  try {
+    const result = await api.annotations(props.projectId, item.baseRevisionId, ids, signal);
+    if (!signal.aborted) annotations.value = result;
+  } catch {
+    if (!signal.aborted) annotationsError.value = 'Не вдалося завантажити коментарі до пропозиції.';
+  } finally {
+    if (!signal.aborted) annotationsLoading.value = false;
   }
 }
 
@@ -366,20 +409,18 @@ async function selectFile(id: number) {
   }
 }
 
-async function downloadFile(id: number) {
-  const item = proposal.value;
+async function downloadOriginal(filename: string, read: (signal: AbortSignal) => Promise<Blob>) {
   const signal = detailController?.signal;
-  const file = candidate.value?.tree.find(({ fileId }) => fileId === id);
-  if (!item || !file || !signal || downloading.value) return;
+  if (!signal || downloading.value) return;
   downloading.value = true;
   downloadError.value = '';
   try {
-    const blob = await api.download(props.projectId, item.id, id, item.version, signal);
+    const blob = await read(signal);
     if (signal.aborted) return;
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = file.path.split('/').at(-1)!;
+    link.download = filename;
     link.click();
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   } catch (error) {
@@ -387,6 +428,23 @@ async function downloadFile(id: number) {
   } finally {
     if (!signal.aborted) downloading.value = false;
   }
+}
+
+function downloadFile(id: number) {
+  const item = proposal.value;
+  const file = candidate.value?.tree.find(({ fileId }) => fileId === id);
+  if (!item || !file) return;
+  void downloadOriginal(file.path.split('/').at(-1)!, (signal) =>
+    api.download(props.projectId, item.id, id, item.version, signal),
+  );
+}
+
+function downloadMaterial(material: Material, side: 'before' | 'after') {
+  const item = proposal.value;
+  if (!item) return;
+  void downloadOriginal(material.name, (signal) =>
+    api.downloadMaterial(props.projectId, item, material, side, signal),
+  );
 }
 
 function openDecision(kind: NonNullable<typeof decision.value>) {
@@ -444,7 +502,10 @@ async function accept() {
     remember(proposal.value);
     decision.value = null;
     acknowledged.value = false;
-    notice.value = `Пропозицію прийнято. Версія ${accepted.revisionNumber}.`;
+    notice.value =
+      accepted.revisionId === item.baseRevisionId
+        ? 'Пропозицію прийнято.'
+        : `Пропозицію прийнято. Версія ${accepted.revisionNumber}.`;
     syncRevision.value = accepted.revisionNumber;
     await syncWorkspace();
   } catch (error) {
@@ -502,7 +563,18 @@ async function rebase() {
     if (signal.aborted) return;
     const { operations } = snapshot;
     const currentFiles = new Map(head.tree.map((file) => [file.fileId, file]));
-    const targetIds = new Set(operations.flatMap((op) => ('fileId' in op ? [op.fileId] : [])));
+    const targetIds = new Set(
+      operations.flatMap((op) => {
+        if ('fileId' in op) return [op.fileId];
+        return op.type === 'createAnnotation' ? [op.anchor.fileId] : [];
+      }),
+    );
+    const materialIds = new Set(
+      operations.flatMap((op) => ('materialId' in op ? [op.materialId] : [])),
+    );
+    const currentMaterials = new Map(
+      head.materials.map((material) => [material.materialId, material]),
+    );
     const folderOperation = operations.some((op) =>
       ['renameDirectory', 'deleteDirectory'].includes(op.type),
     );
@@ -513,6 +585,13 @@ async function rebase() {
         [...(head.directories ?? [])].sort().join('\n') ||
       base.mainFileId !== head.mainFileId ||
       (touchesContext && base.contextText !== head.contextText) ||
+      base.materials.some((previous) => {
+        if (!materialIds.has(previous.materialId)) return false;
+        const current = currentMaterials.get(previous.materialId);
+        return (
+          !current || current.versionId !== previous.versionId || current.name !== previous.name
+        );
+      }) ||
       base.tree.some((file) => {
         const current = currentFiles.get(file.fileId);
         return (
@@ -705,7 +784,7 @@ onBeforeUnmount(() => {
               <ul v-if="validation?.diagnostics.length" class="review-diagnostics">
                 <li v-for="(entry, index) in validation.diagnostics" :key="index">
                   <strong>{{ entry.severity === 'error' ? 'Помилка' : 'Попередження' }}</strong>
-                  <span v-if="entry.path"> · {{ entry.path }}</span>
+                  <span v-if="entry.path"> · {{ diagnosticSource(entry) }}</span>
                   <p>{{ entry.message }}</p>
                 </li>
               </ul>
@@ -726,9 +805,23 @@ onBeforeUnmount(() => {
               :file-loading="fileLoading"
               :file-text="fileText"
               :file-error="fileError"
+              :annotations="annotations"
+              :annotations-loading="annotationsLoading"
+              :annotations-error="annotationsError"
+              :accepted="proposal.status === 'accepted'"
+              :downloading="downloading"
               @select="selectFile"
               @download="downloadFile"
+              @download-material="downloadMaterial"
+              @retry-annotations="loadAnnotations(proposal, diff, detailController!.signal)"
             />
+            <p
+              v-if="active && annotationConflict && !annotationsLoading && !annotationsError"
+              class="field-error"
+              role="alert"
+            >
+              Коментар змінився або його видалено. Попросіть автора оновити пропозицію.
+            </p>
             <p v-if="downloadError" class="field-error" role="alert">{{ downloadError }}</p>
           </template>
           <p v-if="actionError && !proposal" class="field-error" role="alert">{{ actionError }}</p>

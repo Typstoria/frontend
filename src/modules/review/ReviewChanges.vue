@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import type { components } from '../../shared/api/schema';
-
-type ProposalDiff = components['schemas']['ProposalDiffDto'];
-type ProposalCandidate = components['schemas']['ProposalCandidateDto'];
-type ProposalTextFile = components['schemas']['ProposalTextFileDto'];
+import MaterialChanges from '../workspace/MaterialChanges.vue';
+import type { Material } from '../workspace/material-metadata';
+import type {
+  ProposalDiff,
+  ProposalCandidate,
+  ProposalTextFile,
+  ReviewAnnotation,
+} from './review-api';
 
 const props = withDefaults(
   defineProps<{
@@ -14,6 +17,11 @@ const props = withDefaults(
     fileText: ProposalTextFile | null;
     fileLoading: boolean;
     fileError: string;
+    annotations: Map<number, ReviewAnnotation>;
+    annotationsLoading: boolean;
+    annotationsError: string;
+    accepted: boolean;
+    downloading: boolean;
   }>(),
   { selectedFileId: null },
 );
@@ -21,6 +29,8 @@ const props = withDefaults(
 const emit = defineEmits<{
   select: [fileId: number];
   download: [fileId: number];
+  downloadMaterial: [material: Material, side: 'before' | 'after'];
+  retryAnnotations: [];
 }>();
 
 const candidateFiles = computed(() =>
@@ -34,6 +44,31 @@ const fileChanges = computed(() =>
     const leftPath = left.after?.path ?? left.before?.path ?? '';
     const rightPath = right.after?.path ?? right.before?.path ?? '';
     return leftPath.localeCompare(rightPath);
+  }),
+);
+const annotationChanges = computed(() =>
+  props.diff.annotationOperations.map((operation) => {
+    const annotation =
+      operation.type === 'resolveAnnotation' ? props.annotations.get(operation.annotationId) : null;
+    const matches =
+      operation.type === 'resolveAnnotation' &&
+      annotation &&
+      (annotation.version === operation.expectedAnnotationVersion ||
+        (props.accepted &&
+          annotation.status === 'resolved' &&
+          annotation.version === operation.expectedAnnotationVersion + 1));
+    const source = operation.type === 'createAnnotation' ? operation : matches ? annotation : null;
+    const fileId = source?.anchor.fileId;
+    const path =
+      fileId === undefined
+        ? undefined
+        : (fileChanges.value.find((file) => file.fileId === fileId)?.before?.path ??
+          candidateFiles.value.find((file) => file.fileId === fileId)?.path);
+    return {
+      title: operation.type === 'createAnnotation' ? 'Додати коментар' : 'Позначити вирішеним',
+      path,
+      source,
+    };
   }),
 );
 
@@ -85,6 +120,8 @@ function formatBytes(size: number): string {
           !fileChanges.length &&
           !diff.context.changed &&
           !diff.entrypoint.changed &&
+          !diff.materials.length &&
+          !diff.annotationOperations.length &&
           !diff.directories.added.length &&
           !diff.directories.deleted.length
         "
@@ -122,6 +159,34 @@ function formatBytes(size: number): string {
           {{ file.after ? formatBytes(file.after.sizeBytes) : '—' }}
         </p>
       </div>
+      <MaterialChanges
+        class="review-special-change"
+        :changes="diff.materials"
+        :downloading="downloading"
+        downloads
+        @download="(material, side) => emit('downloadMaterial', material, side)"
+      />
+      <section v-if="annotationChanges.length" class="review-special-change">
+        <h3>Анотації</h3>
+        <p v-if="annotationsLoading" role="status">Завантаження коментарів…</p>
+        <p v-else-if="annotationsError" role="alert">
+          {{ annotationsError }}
+          <button type="button" class="button button-quiet" @click="emit('retryAnnotations')">
+            Повторити
+          </button>
+        </p>
+        <ul class="review-annotation-changes">
+          <li v-for="({ title, path, source }, index) in annotationChanges" :key="index">
+            <strong>{{ title }}</strong
+            ><span v-if="path"> · {{ path }}</span>
+            <template v-if="source">
+              <blockquote>{{ source.anchor.quote }}</blockquote>
+              <p>{{ source.body }}</p>
+            </template>
+            <p v-else-if="!annotationsLoading && !annotationsError">Коментар недоступний.</p>
+          </li>
+        </ul>
+      </section>
       <section
         v-if="diff.directories.added.length || diff.directories.deleted.length"
         class="review-special-change"
@@ -212,6 +277,7 @@ function formatBytes(size: number): string {
               <button
                 class="button button-secondary"
                 type="button"
+                :disabled="downloading"
                 @click="emit('download', selectedFile.fileId)"
               >
                 Завантажити
@@ -239,6 +305,20 @@ function formatBytes(size: number): string {
 </template>
 
 <style scoped>
+.review-annotation-changes {
+  display: grid;
+  gap: 8px;
+  overflow-wrap: anywhere;
+}
+.review-annotation-changes blockquote {
+  margin: 4px 0;
+  padding-inline-start: 8px;
+  border-inline-start: 2px solid var(--color-border);
+  white-space: pre-wrap;
+}
+.review-annotation-changes p {
+  white-space: pre-wrap;
+}
 .review-changes {
   display: grid;
   gap: 12px;

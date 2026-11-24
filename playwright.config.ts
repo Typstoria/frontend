@@ -14,6 +14,10 @@ export default defineConfig({
     command: 'npm run dev -- --port 5174',
     url: 'http://localhost:5174',
     reuseExistingServer: false,
-    env: { VITE_GOOGLE_CLIENT_ID: 'browser-test-client.apps.googleusercontent.com' },
+    env: {
+      VITE_GOOGLE_CLIENT_ID: 'browser-test-client.apps.googleusercontent.com',
+      // Browser fixtures supply the API. Unmocked requests must not reach the developer database.
+      API_PROXY_TARGET: 'http://127.0.0.1:9',
+    },
   },
 });

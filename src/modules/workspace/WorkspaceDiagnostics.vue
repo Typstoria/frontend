@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import type { Diagnostic } from './compilation-api';
+import { diagnosticSource, type Diagnostic } from './compilation-diagnostics';
 import WorkspaceSeparator from './WorkspaceSeparator.vue';
 
 type DiagnosticsResult = {
@@ -152,9 +152,9 @@ function openSource(item: Diagnostic) {
               class="diagnostic-link"
               @click="openSource(item)"
             >
-              {{ item.path ?? 'Відкрити файл' }}
+              {{ diagnosticSource(item) ?? 'Відкрити файл' }}
             </button>
-            <span v-else-if="item.path" class="diagnostic-path">{{ item.path }}</span>
+            <span v-else-if="item.path" class="diagnostic-path">{{ diagnosticSource(item) }}</span>
             <p>{{ item.message }}</p>
           </li>
         </ul>

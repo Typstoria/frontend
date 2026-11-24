@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ApiError } from '../../shared/api/client';
 import { identitySession } from '../identity/identity-session';
 import ModalDialog from '../../shared/ui/ModalDialog.vue';
+import MaterialChanges from './MaterialChanges.vue';
 import { createHistoryApi } from './history-api';
 import type { Revision, RevisionDiff } from './history-api';
 import type { Snapshot, TextFile } from './workspace-api';
@@ -618,6 +619,7 @@ onBeforeUnmount(() => {
                 v-else-if="
                   !diff.context.changed &&
                   !diff.entrypoint.changed &&
+                  !diff.materials.length &&
                   !diff.directories.added.length &&
                   !diff.directories.deleted.length
                 "
@@ -640,6 +642,7 @@ onBeforeUnmount(() => {
                   </li>
                 </ul>
               </section>
+              <MaterialChanges class="history-change" :changes="diff.materials" />
               <details v-if="diff.context.changed" class="history-change history-diff-group">
                 <summary class="history-change-heading">
                   <h3>Контекст проєкту</h3>
@@ -684,8 +687,8 @@ onBeforeUnmount(() => {
         @dismiss="restoreOpen = false"
       >
         <p>
-          Вміст усіх файлів і контексту буде замінено станом версії {{ selected?.number }}. Поточні
-          зміни залишаться в історії як окрема версія.
+          Файли, контекст і матеріали буде відновлено до стану версії {{ selected?.number }}.
+          Поточні зміни залишаться в історії як окрема версія.
         </p>
         <div class="modal-actions">
           <button class="button button-secondary" :disabled="busy" @click="restoreOpen = false">

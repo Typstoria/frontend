@@ -10,7 +10,7 @@ import {
 } from 'vue';
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vue-router';
 import { identitySession } from '../identity/identity-session';
-import { createResourceApi, createWorkspaceApi } from './workspace-api';
+import { createResourceApi, createWorkspaceApi, isMaterialChange } from './workspace-api';
 import { createWorkspaceModel, workspaceError } from './workspace-model';
 import {
   registerWorkspaceExit,
@@ -21,11 +21,18 @@ import {
   type RestoreAttempt,
 } from './workspace-lifecycle';
 import TextEditor from './TextEditor.vue';
+import WorkspaceMaterials from './WorkspaceMaterials.vue';
+import WorkspaceComments from './WorkspaceComments.vue';
+import type { CommentLayout } from './comment-layout';
+import type { Annotation, TextAnchor } from './annotation-api';
+import { createTextAnchor, editorSelection, type TextSelection } from './text-anchor';
+import type { Material } from './material-metadata';
 import WorkspaceFiles from './WorkspaceFiles.vue';
 import ModalDialog from '../../shared/ui/ModalDialog.vue';
+import LoadError from '../../shared/ui/LoadError.vue';
 import FileActionDialog, { type WorkspaceFileAction } from './FileActionDialog.vue';
 import ResourceDialog from './ResourceDialog.vue';
-import type { ProjectUpload, StructureChange } from './workspace-api';
+import type { MaterialChange, ProjectUpload, StructureChange } from './workspace-api';
 import {
   fileNameError,
   filePathInFolder,
@@ -74,6 +81,15 @@ const preferencesReady = ref(false);
 const workspaceApi = createWorkspaceApi(identitySession.request);
 const model = createWorkspaceModel(projectId, workspaceApi);
 const { state, atRisk } = model;
+const materialChangePending = computed(() => state.structure.some(isMaterialChange));
+const commentsOpen = ref(false);
+const commentsDirty = ref(false);
+const commentsPanel = ref<InstanceType<typeof WorkspaceComments> | null>(null);
+const commentLayout = ref<CommentLayout | null>(null);
+const activeAnnotation = ref<number | null>(null);
+const commentsTrigger = ref<HTMLButtonElement | null>(null);
+const annotations = ref<Annotation[]>([]);
+const textSelection = ref<(TextSelection & { fileId: number }) | null>(null);
 const workspacePath = `/projects/${projectId}`;
 const historyOpen = computed(() => route.params.workspaceView === 'history');
 const reviewOpen = computed(() => route.params.workspaceView === 'proposals');
@@ -143,6 +159,7 @@ const compileStatus = computed(() => {
 });
 const splitQuery = window.matchMedia('(min-width: 1024px)');
 const canSplit = ref(splitQuery.matches);
+const sideComments = computed(() => canSplit.value && commentsOpen.value && !state.conflict);
 const viewMode = computed<ViewMode>({
   get: () => preferredMode.value ?? (canSplit.value ? 'split' : 'code'),
   set: (mode) => (preferredMode.value = mode === 'split' ? undefined : mode),
@@ -184,6 +201,8 @@ const activeTab = ref<TabId | null>(null);
 const contextOpen = computed(() => activeTab.value === 'context');
 const hasFileTab = computed(() => typeof activeTab.value === 'number');
 const contextInput = ref<HTMLTextAreaElement | null>(null);
+const workspaceHeading = ref<HTMLHeadingElement | null>(null);
+const workspaceLoadError = ref<InstanceType<typeof LoadError> | null>(null);
 type ResourceAction = { directory: string; path?: string; fileId?: number; files?: File[] };
 const resourceAction = ref<ResourceAction | null>(null);
 const resourceBusy = ref(false);
@@ -668,6 +687,22 @@ const actionsDisabled = computed(
     state.structure.length > 0 ||
     !!state.pending,
 );
+async function changeMaterial(operation: MaterialChange, target?: Material) {
+  if (actionsDisabled.value || !state.snapshot) return false;
+  if (
+    target &&
+    !state.snapshot.materials.some(
+      (item) =>
+        item.materialId === target.materialId &&
+        item.versionId === target.versionId &&
+        item.name === target.name,
+    )
+  )
+    return false;
+  const saved = await model.mutate([operation]);
+  // The workspace owns retries once it has recorded an attempt.
+  return saved || !!state.pending || state.structure.length > 0;
+}
 function fileDialogTrigger(trigger?: HTMLElement) {
   if (isMobile.value && mobileFilesVisible.value)
     return document.querySelector<HTMLElement>('.editor-files-toggle');
@@ -1000,10 +1035,14 @@ function canOpenDiagnostic(item: Diagnostic, revisionId: number) {
   );
 }
 async function openDiagnostic(item: Diagnostic, revisionId: number) {
-  if (item.fileId === null || !canOpenDiagnostic(item, revisionId)) return;
-  await selectFile(item.fileId);
+  const { fileId } = item;
+  if (fileId === null || !canOpenDiagnostic(item, revisionId)) return;
+  await selectFile(fileId);
   await nextTick();
-  editor.value?.focus();
+  if (activeTab.value !== fileId || !canOpenDiagnostic(item, revisionId)) return;
+  const file = state.files[fileId];
+  const position = file && file.content === file.base ? (item.range?.start ?? null) : null;
+  await editor.value?.focusAt(fileId, position);
 }
 function openPdf(artifact: NonNullable<typeof compilation.state.artifact>) {
   pdfOpenError.value = '';
@@ -1082,17 +1121,24 @@ const minFilesWidth = 160;
 const minContentWidth = 300;
 const showDesktopFiles = computed(() => !isMobile.value && filesVisible.value && !onlyOutput.value);
 const showSplit = computed(() => effectiveViewMode.value === 'split');
+const commentsWidth = computed(() =>
+  sideComments.value ? Math.max(250, Math.min(340, Math.round(layoutWidth.value * 0.24))) : 0,
+);
 const maxFilesWidth = computed(() => {
   const remaining = showSplit.value
     ? 2 * minContentWidth + 2 * separatorWidth
     : minContentWidth + separatorWidth;
-  return Math.max(minFilesWidth, Math.min(420, layoutWidth.value - remaining));
+  return Math.max(
+    minFilesWidth,
+    Math.min(420, layoutWidth.value - remaining - commentsWidth.value),
+  );
 });
 const filesWidth = computed(() => Math.min(panelSizes.value.filesWidth, maxFilesWidth.value));
 const splitWidth = computed(
   () =>
     layoutWidth.value -
     (showDesktopFiles.value ? filesWidth.value + separatorWidth : 0) -
+    commentsWidth.value -
     separatorWidth,
 );
 const minCodeWidth = computed(() => Math.min(minContentWidth, Math.floor(splitWidth.value / 2)));
@@ -1165,6 +1211,99 @@ watch(
   { deep: true, flush: 'sync' },
 );
 const editor = ref<InstanceType<typeof TextEditor> | null>(null);
+const commentAnchor = computed(() => {
+  const selection = textSelection.value;
+  if (!selection || selection.fileId !== activeTab.value || onlyOutput.value) return null;
+  const file = state.files[selection.fileId];
+  return file ? createTextAnchor(file.content, selection.fileId, selection) : null;
+});
+const annotationMarks = computed(() => {
+  const fileId = activeTab.value;
+  const file = typeof fileId === 'number' ? state.files[fileId] : null;
+  if (!file || file.base !== file.content) return [];
+  return annotations.value.flatMap((item) => {
+    const { position } = item;
+    if (
+      item.fileId !== fileId ||
+      item.status !== 'active' ||
+      item.viewedRevisionId !== state.snapshot?.revision.id ||
+      position.state !== 'attached' ||
+      position.start === null ||
+      position.end === null
+    )
+      return [];
+    const selection = editorSelection(
+      file.content,
+      position.start,
+      position.end,
+      item.anchor.quote,
+    );
+    return selection ? [{ id: item.id, ...selection }] : [];
+  });
+});
+
+function receiveSelection(fileId: number, selection: TextSelection | null) {
+  textSelection.value = selection ? { ...selection, fileId } : null;
+}
+
+async function openComments(anchor?: TextAnchor) {
+  commentsOpen.value = true;
+  await nextTick();
+  if (anchor) {
+    await commentsPanel.value?.start(anchor);
+  } else if (sideComments.value) commentsPanel.value?.focus();
+}
+
+async function openAnnotation(id: number) {
+  commentsOpen.value = true;
+  await nextTick();
+  await commentsPanel.value?.show(id, true);
+}
+
+async function closeComments(focus = true) {
+  commentsOpen.value = false;
+  activeAnnotation.value = null;
+  if (focus) {
+    await nextTick();
+    commentsTrigger.value?.focus({ preventScroll: true });
+  }
+}
+
+async function prepareAnnotation(anchor: TextAnchor) {
+  if (actionsDisabled.value) return null;
+  const matches = (source: string | undefined) =>
+    source !== undefined &&
+    source.slice(anchor.start, anchor.end) === anchor.quote &&
+    source.slice(0, anchor.start).endsWith(anchor.prefix) &&
+    source.slice(anchor.end).startsWith(anchor.suffix);
+  const file = state.files[anchor.fileId];
+  if (!matches(file?.content)) return null;
+  if (file!.base !== file!.content) await model.save();
+  const saved = state.files[anchor.fileId];
+  if (!saved || saved.base !== saved.content || !matches(saved.base) || actionsDisabled.value)
+    return null;
+  return state.snapshot?.revision.id ?? null;
+}
+
+async function revealAnnotation(item: Annotation) {
+  const { position } = item;
+  if (position.start === null || position.end === null) return;
+  if (!canSplit.value) await closeComments(false);
+  await selectFile(item.fileId);
+  await nextTick();
+  const file = state.files[item.fileId];
+  if (
+    !file ||
+    activeTab.value !== item.fileId ||
+    state.snapshot?.revision.id !== item.viewedRevisionId
+  )
+    return;
+  const selection =
+    file.base === file.content
+      ? editorSelection(file.content, position.start, position.end, item.anchor.quote)
+      : null;
+  if (selection) await editor.value?.reveal(item.fileId, selection);
+}
 const emptyMainFileAction = ref<HTMLButtonElement | null>(null);
 const dirtyIds = computed(() =>
   Object.entries(state.files)
@@ -1320,7 +1459,12 @@ const labels = {
 };
 let leaving = false;
 const workspaceAtRisk = computed(
-  () => atRisk.value || resourceUploading.value || restoreLocked.value || reviewBusy.value,
+  () =>
+    atRisk.value ||
+    resourceUploading.value ||
+    restoreLocked.value ||
+    reviewBusy.value ||
+    commentsDirty.value,
 );
 function allowLeave() {
   if (reviewBusy.value) return false;
@@ -1412,6 +1556,12 @@ async function loadWorkspace() {
   initializeWorkspaceOutput();
   if (historyOpen.value) void refreshHistoryHead();
 }
+async function retryWorkspace() {
+  await loadWorkspace();
+  await nextTick();
+  if (state.error) workspaceLoadError.value?.focusAction();
+  else workspaceHeading.value?.focus({ preventScroll: true });
+}
 watch(reviewOpen, (open) => {
   if (open) mobileFilesVisible.value = false;
   else if (workspaceLoaded) initializeWorkspaceOutput();
@@ -1443,10 +1593,19 @@ onBeforeUnmount(() => {
 <template>
   <section ref="workspaceElement" class="page editor-page" :aria-busy="state.loading">
     <div v-if="state.loading" class="editor-state" role="status">Завантаження проєкту…</div>
-    <div v-else-if="state.error" class="editor-state" role="alert">
-      <p>{{ state.error }}</p>
-      <button class="button button-secondary" @click="loadWorkspace">Повторити</button>
-    </div>
+    <LoadError
+      v-else-if="state.error"
+      ref="workspaceLoadError"
+      variant="page"
+      :title="state.unavailable ? 'Проєкт недоступний' : 'Не вдалося відкрити проєкт'"
+      :message="state.error"
+      :retry-label="state.unavailable ? '' : 'Повторити'"
+      @retry="retryWorkspace"
+    >
+      <template #actions>
+        <RouterLink class="button button-secondary" to="/projects">До проєктів</RouterLink>
+      </template>
+    </LoadError>
     <template v-else-if="state.snapshot">
       <div class="editor-heading" :class="{ 'editor-heading-commands': !state.conflict }">
         <button
@@ -1470,7 +1629,9 @@ onBeforeUnmount(() => {
             <path d="M7 3v14" />
           </svg>
         </button>
-        <h1 :title="state.snapshot.project.title">{{ state.snapshot.project.title }}</h1>
+        <h1 ref="workspaceHeading" tabindex="-1" :title="state.snapshot.project.title">
+          {{ state.snapshot.project.title }}
+        </h1>
         <WorkspaceMainMenu
           v-if="!isMobile && !state.conflict"
           :groups="menuGroups"
@@ -1513,6 +1674,31 @@ onBeforeUnmount(() => {
         </div>
         <div v-if="!state.conflict" class="workspace-command-bar">
           <WorkspaceMainMenu v-if="isMobile" :groups="menuGroups" @command="runWorkspaceCommand" />
+          <button
+            ref="commentsTrigger"
+            type="button"
+            class="file-icon-button"
+            aria-label="Коментарі"
+            title="Коментарі"
+            :aria-expanded="commentsOpen"
+            :aria-haspopup="canSplit ? undefined : 'dialog'"
+            @click="commentsOpen ? commentsPanel?.requestClose() : openComments()"
+          >
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 20 20"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              aria-hidden="true"
+            >
+              <path
+                d="M4 3.8h12a1 1 0 0 1 1 1v8.4a1 1 0 0 1-1 1H8l-4 3v-3a1 1 0 0 1-1-1V4.8a1 1 0 0 1 1-1Z"
+              />
+              <path d="M6.5 7.2h7m-7 3.3h5" />
+            </svg>
+          </button>
           <button
             type="button"
             class="file-icon-button"
@@ -1667,14 +1853,20 @@ onBeforeUnmount(() => {
             :disabled="state.status === 'saving'"
             @click="model.save()"
           >
-            {{ state.status === 'refresh_failed' ? 'Оновити файли' : 'Повторити збереження' }}
+            {{
+              state.status === 'refresh_failed'
+                ? materialChangePending
+                  ? 'Оновити матеріали'
+                  : 'Оновити файли'
+                : 'Повторити збереження'
+            }}
           </button>
           <button
             v-if="state.structure.length && state.status === 'failed' && !state.pending"
             class="button button-quiet"
             @click="model.cancelStructure()"
           >
-            Скасувати зміну файлів
+            {{ materialChangePending ? 'Скасувати зміну матеріалу' : 'Скасувати зміну файлів' }}
           </button>
           <button class="button button-quiet" @click="downloadCopy">Завантажити копію</button>
         </div>
@@ -1686,7 +1878,7 @@ onBeforeUnmount(() => {
           <p>Перевірте результат перед відновленням автозбереження.</p>
         </div>
         <section v-if="state.conflict.structure.length" class="conflict-file">
-          <h3>Зміни файлів</h3>
+          <h3>{{ materialChangePending ? 'Зміна матеріалу' : 'Зміни файлів' }}</h3>
           <div v-for="choice in state.conflict.structure" :key="choice.description">
             <p>{{ choice.description }}</p>
             <p v-if="choice.error" class="field-error">
@@ -1805,10 +1997,12 @@ onBeforeUnmount(() => {
         :class="{
           'editor-without-files': !showDesktopFiles,
           'editor-with-output': showSplit,
+          'editor-with-comments': sideComments,
         }"
         :style="{
           '--editor-file-width': `${filesWidth}px`,
           '--editor-code-width': `${codeWidth}px`,
+          '--editor-comments-width': `${commentsWidth}px`,
         }"
       >
         <aside
@@ -1912,6 +2106,15 @@ onBeforeUnmount(() => {
                 @compositionend="model.composition(false)"
                 @blur="model.composition(false)"
               />
+              <WorkspaceMaterials
+                :project-id="projectId"
+                :revision-id="state.snapshot.revision.id"
+                :materials="state.snapshot.materials"
+                :active="contextOpen && !onlyOutput"
+                :locked="actionsDisabled"
+                :change="changeMaterial"
+                :download="downloadBlob"
+              />
             </section>
             <div v-if="activeTab === null" class="editor-empty">
               <div class="editor-empty-content">
@@ -1944,12 +2147,14 @@ onBeforeUnmount(() => {
             >
               Завантаження файла…
             </p>
-            <div v-else-if="hasFileTab && state.fileError" role="alert" class="editor-file-message">
-              <p>{{ state.fileError }}</p>
-              <button class="button button-secondary" @click="model.select(state.selectedId)">
-                Повторити завантаження
-              </button>
-            </div>
+            <LoadError
+              v-else-if="hasFileTab && state.fileError"
+              class="editor-file-message"
+              title="Не вдалося відкрити файл"
+              :message="state.fileError"
+              retry-label="Повторити завантаження"
+              @retry="model.select(state.selectedId)"
+            />
             <div
               v-else-if="hasFileTab && selectedMeta?.contentKind === 'binary'"
               class="editor-file-message"
@@ -1976,6 +2181,11 @@ onBeforeUnmount(() => {
               :document-id="selected ? state.selectedId : 0"
               :model-value="selected?.content ?? ''"
               :reset-key="state.resetKey"
+              :annotations="annotationMarks"
+              :show-comment-gutter="!commentsOpen"
+              :active-annotation="activeAnnotation"
+              :can-comment="!!commentAnchor && !actionsDisabled"
+              :align-comments="sideComments && !onlyOutput && hasFileTab"
               :readonly="
                 restoreLocked ||
                 reviewRevisionToRefresh !== null ||
@@ -1988,9 +2198,15 @@ onBeforeUnmount(() => {
               @update:model-value="(value, fileId) => model.edit(fileId, value)"
               @save="model.save()"
               @composition="model.composition"
+              @selection="receiveSelection"
+              @annotation="commentsPanel?.show($event)"
+              @gutter-comment="openAnnotation"
+              @comment="commentAnchor && openComments(commentAnchor)"
+              @comment-layout="commentLayout = $event"
             />
           </div>
         </section>
+        <div v-if="sideComments" id="workspace-annotation-side" />
         <WorkspaceSeparator
           v-if="showSplit"
           label="Змінити співвідношення коду й PDF"
@@ -2016,6 +2232,34 @@ onBeforeUnmount(() => {
           @open="openPdf"
         />
       </div>
+      <Teleport
+        defer
+        :to="sideComments ? '#workspace-annotation-side' : 'body'"
+        :disabled="!sideComments"
+      >
+        <WorkspaceComments
+          ref="commentsPanel"
+          :open="commentsOpen"
+          :project-id="projectId"
+          :revision-id="state.snapshot.revision.id"
+          :files="state.snapshot.tree"
+          :dirty-file-ids="dirtyIds"
+          :layout="
+            sideComments && !onlyOutput && activeTab === commentLayout?.fileId
+              ? commentLayout
+              : null
+          "
+          :compact="!sideComments"
+          :selection="commentAnchor"
+          :locked="actionsDisabled"
+          :prepare="prepareAnnotation"
+          @dismiss="closeComments()"
+          @list="annotations = $event"
+          @reveal="revealAnnotation"
+          @highlight="activeAnnotation = $event"
+          @dirty="commentsDirty = $event"
+        />
+      </Teleport>
       <WorkspaceDiagnostics
         v-if="!state.conflict"
         v-model:open="diagnosticsOpen"

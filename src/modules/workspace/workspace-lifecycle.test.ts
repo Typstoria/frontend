@@ -29,6 +29,7 @@ const draft: Recovery = {
     tree: [],
     mainFileId: 30,
     contextText: '',
+    materials: [],
   },
   files: { 30: { base: '', content: 'private draft' } },
   pending: null,

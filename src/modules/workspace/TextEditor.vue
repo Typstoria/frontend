@@ -1,33 +1,52 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import type { EditorState } from '@codemirror/state';
-import type { EditorView } from '@codemirror/view';
+import type { EditorState, StateEffectType } from '@codemirror/state';
+import type { DecorationSet, EditorView } from '@codemirror/view';
+import type { TextSelection } from './text-anchor';
+import type { CommentLayout } from './comment-layout';
 
 const props = defineProps<{
   modelValue: string;
   documentId: number;
   readonly?: boolean;
   resetKey?: number;
+  annotations?: (TextSelection & { id: number })[];
+  showCommentGutter?: boolean;
+  canComment?: boolean;
+  alignComments?: boolean;
+  activeAnnotation?: number | null;
 }>();
 
 const emit = defineEmits<{
   'update:modelValue': [value: string, fileId: number];
   save: [];
   composition: [active: boolean];
+  selection: [documentId: number, selection: TextSelection | null];
+  annotation: [id: number];
+  'gutter-comment': [id: number];
+  comment: [];
+  'comment-layout': [layout: CommentLayout];
 }>();
 
 const host = ref<HTMLElement | null>(null);
+const viewport = ref<HTMLElement | null>(null);
+const commentButton = ref<{ x: number; y: number } | null>(null);
+type CommentMarker = { id: number; line: number; y: number; height: number };
+const gutterButtons = ref<CommentMarker[]>([]);
+const measureKey = {};
 const states = new Map<number, EditorState>();
 const scrollSnapshots = new Map<number, ReturnType<EditorView['scrollSnapshot']>>();
 let view: EditorView | undefined;
 let modules: typeof import('@codemirror/view') | undefined;
 let stateModule: typeof import('@codemirror/state') | undefined;
 let readonlyCompartment: import('@codemirror/state').Compartment | undefined;
+let annotationEffect: StateEffectType<DecorationSet> | undefined;
 let baseExtensions: import('@codemirror/state').Extension[] = [];
 let activeDocumentId = props.documentId;
 let composing = false;
 let destroyed = false;
 let syncingExternalValue = false;
+let ready: Promise<void> | undefined;
 
 function dispatchExternalValue(value: string) {
   if (!view || view.state.doc.toString() === value) return;
@@ -56,16 +75,120 @@ function restoreScroll(documentId: number) {
   });
 }
 
+function sendSelection() {
+  const selection = view?.state.selection.main;
+  emit(
+    'selection',
+    activeDocumentId,
+    selection?.empty === false ? { from: selection.from, to: selection.to } : null,
+  );
+}
+
+function measureComments() {
+  view?.requestMeasure({
+    key: measureKey,
+    read(editor) {
+      const bounds = editor.scrollDOM.getBoundingClientRect();
+      const parent = host.value?.getBoundingClientRect();
+      const selection = editor.state.selection.main;
+      const end =
+        props.canComment && !selection.empty && !composing
+          ? editor.coordsAtPos(selection.to, -1)
+          : null;
+      const button =
+        end && parent && bounds.height > 0 && end.bottom >= bounds.top && end.top < bounds.bottom
+          ? {
+              x: Math.max(4, Math.min(parent.width - 48, end.right - parent.left + 6)),
+              y: Math.max(4, Math.min(parent.height - 48, end.bottom - parent.top + 4)),
+            }
+          : null;
+      const layout =
+        props.alignComments && bounds.height > 0
+          ? {
+              fileId: activeDocumentId,
+              viewportTop: bounds.top,
+              scrollTop: editor.scrollDOM.scrollTop,
+              scrollHeight: editor.scrollDOM.scrollHeight,
+              positions: Object.fromEntries(
+                (props.annotations ?? []).map(({ id, from }) => [
+                  id,
+                  editor.lineBlockAt(Math.min(from, editor.state.doc.length)).top +
+                    editor.documentTop -
+                    bounds.top +
+                    editor.scrollDOM.scrollTop,
+                ]),
+              ),
+            }
+          : null;
+      const gutter = new Map<number, CommentMarker>();
+      if (props.showCommentGutter && parent && bounds.height > 0) {
+        const height = editor.defaultLineHeight;
+        for (const { id, from } of props.annotations ?? []) {
+          if (from > editor.state.doc.length) continue;
+          const sourceLine = editor.state.doc.lineAt(from);
+          if (gutter.has(sourceLine.number)) continue;
+          const top = editor.lineBlockAt(sourceLine.from).top + editor.documentTop;
+          const center = top + height / 2;
+          if (center >= bounds.top && center < bounds.bottom) {
+            gutter.set(sourceLine.number, {
+              id,
+              line: sourceLine.number,
+              y: center - parent.top,
+              height,
+            });
+          }
+        }
+      }
+      return { button, layout, gutter: [...gutter.values()].sort((a, b) => a.line - b.line) };
+    },
+    write({ button, layout, gutter }) {
+      commentButton.value = button;
+      if (gutter.length || gutterButtons.value.length) gutterButtons.value = gutter;
+      if (layout) emit('comment-layout', layout);
+    },
+  });
+}
+
+function updateAnnotations() {
+  if (!view || !modules || !annotationEffect) return;
+  const { Decoration } = modules;
+  const length = view.state.doc.length;
+  const marks = (props.showCommentGutter ? [] : (props.annotations ?? []))
+    .filter(({ from, to }) => from >= 0 && from < to && to <= length)
+    .map(({ from, to, id }) =>
+      Decoration.mark({
+        class:
+          id === props.activeAnnotation
+            ? 'cm-annotation-mark cm-annotation-current'
+            : 'cm-annotation-mark',
+        attributes: { 'data-annotation-id': String(id) },
+      }).range(from, to),
+    );
+  view.dispatch({
+    effects: annotationEffect.of(Decoration.set(marks, true)),
+  });
+}
+
 async function initialize() {
   const [loadedStateModule, viewModule, commandsModule] = await Promise.all([
     import('@codemirror/state'),
     import('@codemirror/view'),
     import('@codemirror/commands'),
   ]);
-  if (destroyed || !host.value) return;
+  if (destroyed || !viewport.value) return;
   stateModule = loadedStateModule;
   modules = viewModule;
   readonlyCompartment = new loadedStateModule.Compartment();
+  const setAnnotations = loadedStateModule.StateEffect.define<DecorationSet>();
+  annotationEffect = setAnnotations;
+  const annotations = loadedStateModule.StateField.define<DecorationSet>({
+    create: () => viewModule.Decoration.none,
+    update(marks, transaction) {
+      for (const effect of transaction.effects) if (effect.is(setAnnotations)) return effect.value;
+      return transaction.docChanged ? marks.map(transaction.changes) : marks;
+    },
+    provide: (field) => viewModule.EditorView.decorations.from(field),
+  });
 
   baseExtensions = [
     commandsModule.history(),
@@ -73,6 +196,14 @@ async function initialize() {
     viewModule.highlightActiveLine(),
     viewModule.highlightActiveLineGutter(),
     viewModule.keymap.of([
+      {
+        key: 'Mod-Alt-m',
+        run: () => {
+          if (!props.canComment || composing) return false;
+          emit('comment');
+          return true;
+        },
+      },
       {
         key: 'Mod-s',
         run: () => {
@@ -104,6 +235,7 @@ async function initialize() {
     ]),
     viewModule.EditorView.lineWrapping,
     loadedStateModule.EditorState.tabSize.of(2),
+    annotations,
     readonlyCompartment.of([
       loadedStateModule.EditorState.readOnly.of(Boolean(props.readonly)),
       viewModule.EditorView.editable.of(!props.readonly),
@@ -117,6 +249,17 @@ async function initialize() {
       if (update.docChanged && !syncingExternalValue) {
         emit('update:modelValue', update.state.doc.toString(), activeDocumentId);
       }
+      if (update.selectionSet || update.docChanged) sendSelection();
+      if (update.selectionSet || update.geometryChanged || update.viewportChanged)
+        measureComments();
+    }),
+    viewModule.EditorView.domEventHandlers({
+      click(event) {
+        const mark =
+          event.target instanceof Element ? event.target.closest('[data-annotation-id]') : null;
+        if (mark) emit('annotation', Number(mark.getAttribute('data-annotation-id')));
+      },
+      scroll: measureComments,
     }),
   ];
 
@@ -128,21 +271,26 @@ async function initialize() {
         extensions: baseExtensions,
       });
 
-  view = new viewModule.EditorView({ state, parent: host.value });
+  view = new viewModule.EditorView({ state, parent: viewport.value });
   view.contentDOM.addEventListener('compositionstart', onCompositionStart);
   view.contentDOM.addEventListener('compositionend', onCompositionEnd);
   activeDocumentId = props.documentId;
   states.set(activeDocumentId, view.state);
   if (cached) dispatchExternalValue(props.modelValue);
+  updateAnnotations();
+  sendSelection();
+  measureComments();
 }
 
 function onCompositionStart() {
   composing = true;
+  commentButton.value = null;
   emit('composition', true);
 }
 
 function onCompositionEnd() {
   composing = false;
+  measureComments();
   emit('composition', false);
 }
 
@@ -162,6 +310,8 @@ watch(
       reconfigureReadonly(Boolean(props.readonly));
       restoreScroll(documentId);
       states.set(activeDocumentId, view.state);
+      sendSelection();
+      updateAnnotations();
       return;
     }
 
@@ -183,6 +333,8 @@ watch(
         states.set(documentId, view.state);
         restoreScroll(documentId);
       }
+      sendSelection();
+      updateAnnotations();
       return;
     }
 
@@ -198,8 +350,51 @@ watch(
   },
 );
 
-onMounted(() => void initialize());
-defineExpose({ focus: () => view?.focus() });
+watch(
+  [() => props.annotations, () => props.activeAnnotation, () => props.showCommentGutter],
+  updateAnnotations,
+  { flush: 'post' },
+);
+watch(
+  [
+    () => props.canComment,
+    () => props.alignComments,
+    () => props.annotations,
+    () => props.showCommentGutter,
+  ],
+  measureComments,
+  { flush: 'post' },
+);
+
+async function focusAt(documentId: number, position: { line: number; character: number } | null) {
+  await ready;
+  if (destroyed || !view || documentId !== activeDocumentId) return;
+  if (position && position.line < view.state.doc.lines) {
+    const line = view.state.doc.line(position.line + 1);
+    if (position.character <= line.length) {
+      view.dispatch({
+        selection: { anchor: line.from + position.character },
+        scrollIntoView: true,
+      });
+    }
+  }
+  view.focus();
+}
+
+onMounted(() => {
+  ready = initialize();
+});
+async function reveal(documentId: number, selection: TextSelection) {
+  await ready;
+  if (destroyed || !view || documentId !== activeDocumentId || selection.to > view.state.doc.length)
+    return;
+  view.dispatch({
+    selection: { anchor: selection.from, head: selection.to },
+    scrollIntoView: true,
+  });
+  view.focus();
+}
+defineExpose({ focus: () => view?.focus(), focusAt, reveal });
 
 onBeforeUnmount(() => {
   destroyed = true;
@@ -214,14 +409,113 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div ref="host" class="text-editor" />
+  <div ref="host" class="text-editor">
+    <div
+      ref="viewport"
+      class="text-editor-viewport"
+      :class="{ 'text-editor-with-comment-gutter': showCommentGutter && annotations?.length }"
+    />
+    <div v-if="showCommentGutter && annotations?.length" class="editor-comment-gutter">
+      <button
+        v-for="marker in gutterButtons"
+        :key="marker.line"
+        type="button"
+        class="file-icon-button editor-gutter-comment"
+        :style="{ top: `${marker.y}px`, height: `${marker.height}px` }"
+        :aria-label="`Відкрити коментарі до рядка ${marker.line}`"
+        @click="emit('gutter-comment', marker.id)"
+      >
+        <svg
+          width="17"
+          height="17"
+          viewBox="0 0 20 20"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.6"
+          aria-hidden="true"
+        >
+          <path
+            d="M4 4h12a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H8l-4 3v-3a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Z M6.5 8h7m-7 3h4"
+          />
+        </svg>
+      </button>
+    </div>
+    <button
+      v-if="commentButton && canComment"
+      type="button"
+      class="file-icon-button editor-selection-comment"
+      aria-label="Додати коментар до виділення"
+      aria-keyshortcuts="Control+Alt+M Meta+Alt+M"
+      title="Додати коментар до виділення"
+      :style="{ left: `${commentButton.x}px`, top: `${commentButton.y}px` }"
+      @mousedown.prevent
+      @click="emit('comment')"
+    >
+      <svg
+        width="20"
+        height="20"
+        viewBox="0 0 20 20"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.5"
+        aria-hidden="true"
+      >
+        <path d="M4 4h12a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H8l-4 3v-3a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Z" />
+        <path d="M7 9h6m-3-3v6" />
+      </svg>
+    </button>
+  </div>
 </template>
 
 <style>
 .text-editor,
+.text-editor-viewport,
 .text-editor .cm-editor {
   min-height: 100%;
   height: 100%;
+}
+.text-editor {
+  position: relative;
+  --editor-comment-gutter-width: 30px;
+}
+.text-editor-with-comment-gutter {
+  padding-inline-start: var(--editor-comment-gutter-width);
+}
+.editor-comment-gutter {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  width: var(--editor-comment-gutter-width);
+  overflow: hidden;
+  background: var(--color-background);
+  pointer-events: none;
+}
+.editor-comment-gutter .editor-gutter-comment {
+  position: absolute;
+  inset-inline: 0;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  transform: translateY(-50%);
+  color: var(--color-primary);
+  pointer-events: auto;
+}
+.editor-gutter-comment:focus-visible {
+  outline-offset: -2px;
+}
+.text-editor .editor-selection-comment {
+  position: absolute;
+  z-index: 2;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface);
+  box-shadow: 0 2px 8px #102b4924;
+  color: var(--color-primary);
 }
 
 .text-editor .cm-editor {
@@ -235,5 +529,14 @@ onBeforeUnmount(() => {
 
 .text-editor .cm-content {
   padding: 1rem 0;
+}
+.cm-annotation-mark {
+  background: #fff2cc;
+  box-shadow: inset 0 -1px #b18428;
+  cursor: pointer;
+}
+.cm-annotation-current {
+  background: #ffe49d;
+  box-shadow: inset 0 -2px #977222;
 }
 </style>

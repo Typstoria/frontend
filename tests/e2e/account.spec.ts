@@ -81,7 +81,7 @@ test('copies the OAuth address and revokes a connection after confirmation', asy
                 id: 41,
                 name: 'Асистент редактора',
                 clientId: 'oauth-public-client',
-                scopes: ['documents:read', 'changes:propose'],
+                scopes: ['documents:read', 'changes:propose', 'annotations:read'],
                 projectIds: [7],
                 projects: [{ id: 7, title: 'Курсова робота' }],
                 status,
@@ -114,6 +114,7 @@ test('copies the OAuth address and revokes a connection after confirmation', asy
   await connection.getByText('Переглянути дозволи', { exact: true }).click();
   await expect(connection.getByText('Курсова робота', { exact: true })).toBeVisible();
   await expect(connection.getByText('Створення пропозицій змін', { exact: true })).toBeVisible();
+  await expect(connection.getByText('Перегляд анотацій', { exact: true })).toBeVisible();
   await expect(page.getByLabel('Адреса для підключення')).toHaveValue(url);
   await page.getByRole('button', { name: 'Скопіювати адресу', exact: true }).click();
   await expect(page.locator('html')).toHaveAttribute('data-copied-address', url);

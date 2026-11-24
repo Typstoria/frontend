@@ -2,6 +2,7 @@ import { ApiError } from '../../shared/api/client';
 import type { RequestOptions } from '../../shared/api/client';
 import type { components } from '../../shared/api/schema';
 import { createWorkspaceApi, validId } from './workspace-api';
+import { parseMaterialDiffs } from './material-metadata';
 
 export type Revision = components['schemas']['RevisionDetailsDto'];
 export type RevisionDiff = components['schemas']['RevisionDiffDto'];
@@ -116,7 +117,7 @@ function parseDiff(value: unknown, fromId: number, toId: number): RevisionDiff {
       invalid();
     fileIds.add(file.fileId);
   }
-  return { ...value, directories } as RevisionDiff;
+  return { ...value, directories, materials: parseMaterialDiffs(value.materials) } as RevisionDiff;
 }
 
 function parseRestored(value: unknown, projectId: number, targetId: number): RestoredRevision {

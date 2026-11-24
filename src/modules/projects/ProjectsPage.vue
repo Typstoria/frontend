@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 import { RouterLink } from 'vue-router';
 import { ApiError } from '../../shared/api/client';
 import ModalDialog from '../../shared/ui/ModalDialog.vue';
+import LoadError from '../../shared/ui/LoadError.vue';
 import { identitySession } from '../identity/identity-session';
 import { createProjectsApi, titleError } from './projects-api';
 import type { Project } from './projects-api';
@@ -31,7 +32,7 @@ const fieldError = ref('');
 const mutationError = ref('');
 const busy = ref(false);
 const unavailable = ref(false);
-let failedLoad: 'reset' | 'more' = 'reset';
+const failedLoad = ref<'reset' | 'more'>('reset');
 let listController: AbortController | null = null;
 let listGeneration = 0;
 let searchTimer: ReturnType<typeof setTimeout> | undefined;
@@ -84,11 +85,11 @@ async function load(kind: 'reset' | 'more' = 'reset', search = appliedSearch.val
     loaded.value = true;
   } catch (error) {
     if (requestController.signal.aborted || generation !== listGeneration) return;
-    failedLoad = kind;
+    failedLoad.value = kind;
     listError.value =
       error instanceof ApiError && error.status === 429
         ? 'Забагато запитів. Спробуйте трохи пізніше.'
-        : 'Не вдалося завантажити проєкти. Перевірте підключення та повторіть спробу.';
+        : 'Перевірте з’єднання й повторіть спробу.';
   } finally {
     if (generation === listGeneration) {
       clearSkeleton();
@@ -310,10 +311,19 @@ onBeforeUnmount(() => {
     >
       Завантаження проєктів…
     </p>
-    <div v-if="listError" class="form-message form-error projects-error" role="alert">
-      <p>{{ listError }}</p>
-      <button class="text-button" :disabled="!!loading" @click="load(failedLoad)">Повторити</button>
-    </div>
+    <LoadError
+      v-if="listError"
+      class="projects-error"
+      :title="
+        failedLoad === 'more'
+          ? 'Не вдалося завантажити наступні проєкти'
+          : 'Не вдалося завантажити проєкти'
+      "
+      :message="listError"
+      retry-label="Повторити"
+      :retrying="!!loading"
+      @retry="load(failedLoad)"
+    />
 
     <ul v-if="projects.length" class="project-list" aria-label="Проєкти" :aria-busy="!!loading">
       <li v-for="project in projects" :key="project.id" class="project-card">

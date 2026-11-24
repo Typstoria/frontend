@@ -2,6 +2,9 @@
   gap: 20px;
   margin-bottom: 28px;
 }
+.projects-page .projects-error {
+  margin-block-end: 16px;
+}
 
 .projects-page .projects-toolbar-actions {
   display: flex;

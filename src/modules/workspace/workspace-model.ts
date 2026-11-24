@@ -1,6 +1,7 @@
 import { computed, reactive } from 'vue';
 import { ApiError } from '../../shared/api/client';
 import type { Changes, Snapshot, SaveResult, StructureChange, WorkspaceApi } from './workspace-api';
+import { isMaterialChange } from './workspace-api';
 import { inFolder } from './file-path';
 import { structureError } from './file-structure';
 
@@ -40,7 +41,16 @@ export type ConflictFile = {
   merged: string;
   useRemote: boolean;
 };
-export function describeStructure(operation: StructureChange, files: Snapshot['tree']): string {
+export function describeStructure(
+  operation: StructureChange,
+  files: Snapshot['tree'],
+  materials: Snapshot['materials'] = [],
+): string {
+  if (operation.type === 'attachMaterial') return `Додати матеріал ${operation.name ?? ''}`.trim();
+  if (operation.type === 'replaceMaterial' || operation.type === 'removeMaterial') {
+    const name = materials.find((material) => material.materialId === operation.materialId)?.name;
+    return `${operation.type === 'replaceMaterial' ? 'Замінити' : 'Вилучити'} матеріал ${name ?? ''}`.trim();
+  }
   const source =
     'fileId' in operation
       ? (files.find((file) => file.fileId === operation.fileId)?.path ?? 'Недоступний файл')
@@ -63,6 +73,16 @@ function replayStructureError(
   current: Snapshot,
 ) {
   for (const operation of operations) {
+    if (isMaterialChange(operation) && 'materialId' in operation) {
+      const before = previous.materials.find(
+        (material) => material.materialId === operation.materialId,
+      );
+      const after = current.materials.find(
+        (material) => material.materialId === operation.materialId,
+      );
+      if (!before || !after || before.versionId !== after.versionId || before.name !== after.name)
+        return 'Матеріал змінився. Перегляньте поточний матеріал перед повтором.';
+    }
     if (operation.type === 'replaceFile') {
       const before = previous.tree.find((file) => file.fileId === operation.fileId);
       const after = current.tree.find((file) => file.fileId === operation.fileId);
@@ -109,6 +129,24 @@ function typstSources(snapshot: Snapshot) {
   return snapshot.tree.filter((file) => file.contentKind === 'text' && /\.typ$/iu.test(file.path));
 }
 
+function missingMaterialChanges(operations: Changes['operations'], snapshot: Snapshot | null) {
+  return operations.some((operation) => {
+    if (!isMaterialChange(operation)) return false;
+    const id = operation.type === 'attachMaterial' ? operation.versionId : operation.materialId;
+    const material = snapshot?.materials.find((item) => item.materialId === id);
+    return operation.type === 'removeMaterial'
+      ? material !== undefined
+      : material?.versionId !== operation.versionId ||
+          (operation.name !== undefined && material.name !== operation.name);
+  });
+}
+
+function refreshError(attempt: Attempt) {
+  return attempt.body.operations.some(isMaterialChange)
+    ? 'Зміни збережено. Не вдалося оновити матеріали.'
+    : 'Зміни збережено. Не вдалося оновити список файлів. Повторіть оновлення.';
+}
+
 export function createWorkspaceModel(projectId: number, api: WorkspaceApi, delay = 1000) {
   const state = reactive({
     snapshot: null as Snapshot | null,
@@ -118,6 +156,7 @@ export function createWorkspaceModel(projectId: number, api: WorkspaceApi, delay
     loading: false,
     fileLoading: false,
     error: '',
+    unavailable: false,
     fileError: '',
     saveError: '',
     status: 'clean' as SaveStatus,
@@ -175,7 +214,7 @@ export function createWorkspaceModel(projectId: number, api: WorkspaceApi, delay
       state.files[fileId] = { base: text.content, content: text.content };
     } catch (error) {
       if (active && sequence === fileSequence)
-        state.fileError = workspaceError(error, 'Не вдалося завантажити файл. Спробуйте ще раз.');
+        state.fileError = workspaceError(error, 'Перевірте з’єднання й повторіть спробу.');
     } finally {
       if (active && sequence === fileSequence) state.fileLoading = false;
     }
@@ -183,6 +222,7 @@ export function createWorkspaceModel(projectId: number, api: WorkspaceApi, delay
   async function load(recovery?: Recovery) {
     state.loading = true;
     state.error = '';
+    state.unavailable = false;
     try {
       if (recovery) {
         state.snapshot = recovery.snapshot;
@@ -205,7 +245,7 @@ export function createWorkspaceModel(projectId: number, api: WorkspaceApi, delay
                 : 'clean';
         if (state.pending)
           state.saveError = state.pending.result
-            ? 'Зміни збережено. Не вдалося оновити список файлів. Повторіть оновлення.'
+            ? refreshError(state.pending)
             : 'Результат попереднього збереження невідомий. Повторіть його перед наступними змінами.';
         else if (state.status === 'conflict')
           state.saveError =
@@ -223,8 +263,14 @@ export function createWorkspaceModel(projectId: number, api: WorkspaceApi, delay
       await select(state.snapshot!.mainFileId);
       schedule();
     } catch (error) {
-      if (active)
-        state.error = workspaceError(error, 'Не вдалося відкрити проєкт. Спробуйте ще раз.');
+      if (active) {
+        state.unavailable = error instanceof ApiError && [403, 404].includes(error.status);
+        state.error = state.unavailable
+          ? 'Проєкт міг бути видалений або доступ до нього змінився.'
+          : error instanceof ApiError && error.status === 503
+            ? 'Сервіс тимчасово недоступний.'
+            : workspaceError(error, 'Перевірте з’єднання й повторіть спробу.');
+      }
     } finally {
       if (active) state.loading = false;
     }
@@ -445,6 +491,8 @@ export function createWorkspaceModel(projectId: number, api: WorkspaceApi, delay
         ? await api.state(projectId, controller.signal, result.revisionId)
         : null;
       if (!active) return;
+      if (missingMaterialChanges(attempt.body.operations, snapshot))
+        throw new ApiError(200, 'INVALID_RESPONSE', '', null);
       const uploadedTexts = new Map<number, string>();
       for (const operation of attempt.body.operations) {
         if (operation.type !== 'createFile' && operation.type !== 'attachFile') continue;
@@ -503,7 +551,12 @@ export function createWorkspaceModel(projectId: number, api: WorkspaceApi, delay
       if (
         result.revisionId !== attempt.body.baseRevisionId &&
         attempt.body.operations.some(
-          (operation) => operation.type !== 'updateContext' && operation.type !== 'createDirectory',
+          (operation) =>
+            operation.type !== 'updateContext' &&
+            operation.type !== 'createDirectory' &&
+            operation.type !== 'createAnnotation' &&
+            operation.type !== 'resolveAnnotation' &&
+            !isMaterialChange(operation),
         )
       )
         state.compilationRevision = result.revisionId;
@@ -517,7 +570,7 @@ export function createWorkspaceModel(projectId: number, api: WorkspaceApi, delay
       if (!active) return;
       if (attempt.result) {
         state.status = 'refresh_failed';
-        state.saveError = 'Зміни збережено. Не вдалося оновити список файлів. Повторіть оновлення.';
+        state.saveError = refreshError(attempt);
       } else if (error instanceof ApiError && error.code === 'UPLOAD_EXPIRED') {
         state.pending = null;
         state.structure = [];
@@ -558,7 +611,7 @@ export function createWorkspaceModel(projectId: number, api: WorkspaceApi, delay
     clearTimer();
     state.structure = JSON.parse(JSON.stringify(operations)) as StructureChange[];
     state.structureLabels = operations.map((operation) =>
-      describeStructure(operation, state.snapshot!.tree),
+      describeStructure(operation, state.snapshot!.tree, state.snapshot!.materials),
     );
     state.status = 'dirty';
     await save();
@@ -650,7 +703,7 @@ export function createWorkspaceModel(projectId: number, api: WorkspaceApi, delay
     const structure = conflict.structure.filter((choice) => choice.include && !choice.error);
     state.structure = structure.flatMap((choice) => choice.operations);
     state.structureLabels = state.structure.map((operation) =>
-      describeStructure(operation, state.snapshot!.tree),
+      describeStructure(operation, state.snapshot!.tree, state.snapshot!.materials),
     );
     state.conflict = null;
     state.pending = null;
