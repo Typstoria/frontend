@@ -75,6 +75,8 @@ function share(value: unknown): Share {
 }
 function preview(value: unknown): Preview {
   if (!record(value) || typeof value.includeContext !== 'boolean') invalid();
+  const annotationCount = value.annotationCount ?? 0;
+  if (!size(annotationCount)) invalid();
   const entrypoint = string(value.entrypoint);
   const files = list(value.files, (file) => {
     if (
@@ -99,6 +101,7 @@ function preview(value: unknown): Preview {
     files,
     includeContext: value.includeContext,
     contextText: string(value.contextText),
+    annotationCount,
     directories: list(value.directories ?? [], string),
     materials: list(value.materials, (material) => {
       if (!record(material) || !size(material.index) || !size(material.sizeBytes)) invalid();
@@ -210,6 +213,7 @@ export function createTemplatesApi(
         description: string;
         revisionId: number;
         includeContext: boolean;
+        includeAnnotations?: boolean;
       },
       signal: AbortSignal,
     ) {
@@ -288,13 +292,17 @@ export function createTemplatesApi(
     async exportZip(
       projectId: number,
       revisionId: number,
-      includeContext: boolean,
+      profile: 'document' | 'project',
       signal: AbortSignal,
     ) {
       return archive(
         await privateRequest(`/projects/${projectId}/export`, {
           signal,
-          query: { revisionId, profile: includeContext ? 'project' : 'document' },
+          query: {
+            revisionId,
+            profile,
+            ...(profile === 'project' ? { includeAnnotations: 'true' } : {}),
+          },
           responseType: 'blob',
         }),
       );

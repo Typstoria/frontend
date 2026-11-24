@@ -93,7 +93,7 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** Preview the exact file/material scope before enabling backup. Context is excluded by default. */
+    /** Preview files, materials and annotation count before enabling backup. */
     get: operations['BackupController_contents'];
     put?: never;
     post?: never;
@@ -131,7 +131,7 @@ export interface paths {
     };
     get: operations['BackupController_list'];
     put?: never;
-    /** Queue a selected accepted revision within this backup series; repeated calls return the same run. The worker also discovers accepted revisions automatically. */
+    /** Queue a selected accepted revision within this backup series; repeated calls with unchanged contents return the same run. The worker also discovers accepted revisions automatically. */
     post: operations['BackupController_createRun'];
     delete?: never;
     options?: never;
@@ -629,7 +629,7 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** Validate the entire ZIP in staging, then atomically create revision 1. No history, annotations or credentials are imported. */
+    /** Validate the entire ZIP in staging, then atomically create revision 1. Restores portable annotations when included. */
     post: operations['TransferController_import'];
     delete?: never;
     options?: never;
@@ -644,7 +644,7 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** Export immutable source/resources; profile=project explicitly includes context/materials. Compilation outputs and private history are excluded. */
+    /** Export immutable source/resources; profile=project includes context/materials and supports opting in to annotations. Compilation outputs and private history are excluded. */
     get: operations['TransferController_export'];
     put?: never;
     post?: never;
@@ -1783,12 +1783,16 @@ export interface components {
     BackupContentsDto: {
       revisionId: number;
       includeContext: boolean;
+      includeAnnotations: boolean;
       entrypoint: string;
       files: string[];
       materials: string[];
+      annotationCount: number;
       sizeBytes: number;
     };
     ConfigureBackupDto: {
+      /** @default false */
+      includeAnnotations: boolean;
       expectedVersion?: number;
       repositoryId: string;
       branch: string;
@@ -1807,6 +1811,7 @@ export interface components {
       repositoryPrivate: boolean;
       branch: string;
       includeContext: boolean;
+      includeAnnotations: boolean;
       enabled: boolean;
       version: number;
       lastSyncedRevisionNumber: number;
@@ -1829,6 +1834,7 @@ export interface components {
       repositoryName: string;
       branch: string;
       includeContext: boolean;
+      includeAnnotations: boolean;
       attempts: number;
       createdAt: string;
     };
@@ -2760,6 +2766,7 @@ export interface components {
       includeContext: boolean;
       entrypoint: string;
       contextText: string;
+      annotationCount: number;
       files: components['schemas']['TemplateFileDto'][];
       materials: components['schemas']['TemplateMaterialDto'][];
     };
@@ -2777,6 +2784,8 @@ export interface components {
        * @example 1
        */
       revisionId: number;
+      /** @default false */
+      includeAnnotations: boolean;
       description?: string;
       /** @default false */
       includeContext: Record<string, never>;
@@ -3633,7 +3642,10 @@ export interface operations {
   };
   BackupController_contents: {
     parameters: {
-      query?: never;
+      query?: {
+        includeContext?: boolean;
+        includeAnnotations?: boolean;
+      };
       header?: never;
       path: {
         projectId: number;
@@ -5603,6 +5615,7 @@ export interface operations {
         /** @description Omit to read the current accepted revision. */
         revisionId?: number;
         profile?: 'document' | 'project';
+        includeAnnotations?: boolean;
       };
       header?: never;
       path: {

@@ -135,4 +135,10 @@ async function openFile(file: Preview['files'][number]) {
       Контекст і матеріали відсутні.
     </p>
   </section>
+  <section v-if="preview.annotationCount" class="panel template-files">
+    <div class="template-section-heading">
+      <h2>Коментарі</h2>
+      <span class="muted">{{ preview.annotationCount }}</span>
+    </div>
+  </section>
 </template>

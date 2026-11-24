@@ -430,6 +430,7 @@ test('creates a template and exports ZIP from the saved workspace revision', asy
       description: '',
       revisionId: 100,
       includeContext: false,
+      includeAnnotations: true,
     });
     return route.fulfill({ json: template });
   });
@@ -437,6 +438,7 @@ test('creates a template and exports ZIP from the saved workspace revision', asy
     const query = new URL(route.request().url()).searchParams;
     expect(query.get('revisionId')).toBe('100');
     expect(query.get('profile')).toBe('project');
+    expect(query.get('includeAnnotations')).toBe('true');
     return route.fulfill({ contentType: 'application/zip', body: zip });
   });
   await page.goto('/projects/1');
@@ -446,6 +448,8 @@ test('creates a template and exports ZIP from the saved workspace revision', asy
   await page.getByRole('menuitem', { name: 'Зберегти як шаблон…' }).click();
   await expect(page.getByText('Збережена версія 1')).toBeVisible();
   await expect(page.getByLabel('Додати контекст і матеріали')).not.toBeChecked();
+  await expect(page.getByLabel('Додати коментарі')).not.toBeChecked();
+  await page.getByLabel('Додати коментарі').check();
   await page.getByRole('button', { name: 'Зберегти шаблон' }).click();
   await expect(page.getByRole('dialog').getByRole('status')).toContainText(
     'Шаблон «Мій звіт» збережено.',
@@ -453,8 +457,9 @@ test('creates a template and exports ZIP from the saved workspace revision', asy
   await page.getByRole('button', { name: 'Готово' }).click();
   await menu.click();
   await page.getByRole('menuitem', { name: 'Експортувати ZIP…' }).click();
-  await expect(page.getByLabel('Додати контекст і матеріали')).not.toBeChecked();
-  await page.getByLabel('Додати контекст і матеріали').check();
+  await expect(page.getByRole('radio', { name: 'Файли документа' })).toBeChecked();
+  await page.getByRole('radio', { name: 'Копія проєкту' }).check();
+  await expect(page.getByText('Файли, контекст, матеріали й коментарі.')).toBeVisible();
   await checkLayout(page);
   await page.screenshot({ path: info.outputPath('export.png') });
   const download = page.waitForEvent('download');

@@ -3,7 +3,11 @@ import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 import ModalDialog from '../../shared/ui/ModalDialog.vue';
 import { createTemplatesApi, transferError, type Share } from './templates-api';
 
-const props = defineProps<{ templateId: number; includesContext: boolean }>();
+const props = defineProps<{
+  templateId: number;
+  includesContext: boolean;
+  includesAnnotations: boolean;
+}>();
 const emit = defineEmits<{ dismiss: [] }>();
 const api = createTemplatesApi();
 const controller = new AbortController();
@@ -113,11 +117,12 @@ function status(share: Share) {
     @dismiss="emit('dismiss')"
   >
     <p class="muted">
-      За посиланням можна переглянути шаблон і створити з нього проєкт.<template
-        v-if="includesContext"
-      >
-        Контекст і матеріали також будуть доступні.</template
-      >
+      За посиланням можна переглянути шаблон і створити з нього проєкт.
+      <template v-if="includesContext && includesAnnotations">
+        Контекст, матеріали й коментарі також будуть доступні.
+      </template>
+      <template v-else-if="includesContext">Контекст і матеріали також будуть доступні.</template>
+      <template v-else-if="includesAnnotations">Коментарі також будуть доступні.</template>
     </p>
     <form class="template-share-form" @submit.prevent="create">
       <div class="form-field">

@@ -229,6 +229,7 @@ async function remove() {
         v-if="dialog === 'shares' && source.kind === 'owned'"
         :template-id="source.id"
         :includes-context="preview.includeContext"
+        :includes-annotations="preview.annotationCount > 0"
         @dismiss="dialog = null"
       />
       <ModalDialog

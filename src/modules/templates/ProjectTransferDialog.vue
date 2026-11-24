@@ -21,6 +21,8 @@ const controller = new AbortController();
 const title = ref(props.projectTitle);
 const description = ref('');
 const includeContext = ref(false);
+const includeAnnotations = ref(false);
+const exportProfile = ref<'document' | 'project'>('document');
 const nameError = ref('');
 const error = ref('');
 const busy = ref(false);
@@ -40,7 +42,7 @@ async function submit() {
       const zip = await api.exportZip(
         props.projectId,
         props.revisionId,
-        includeContext.value,
+        exportProfile.value,
         controller.signal,
       );
       controller.signal.throwIfAborted();
@@ -54,6 +56,7 @@ async function submit() {
           description: description.value.trim(),
           revisionId: props.revisionId,
           includeContext: includeContext.value,
+          ...(includeAnnotations.value ? { includeAnnotations: true } : {}),
         },
         controller.signal,
       );
@@ -129,22 +132,48 @@ async function submit() {
           />
         </div>
       </template>
-      <label class="transfer-check">
-        <input
-          v-model="includeContext"
-          type="checkbox"
-          :disabled="busy"
-          aria-describedby="snapshot-scope"
-        />
-        Додати контекст і матеріали
-      </label>
-      <p id="snapshot-scope" class="muted transfer-hint">
-        {{
-          includeContext
-            ? 'Увійдуть файли, текст контексту й оригінали матеріалів.'
-            : 'Увійдуть лише файли документа й ресурси.'
-        }}
-      </p>
+      <fieldset v-if="mode === 'export'" class="transfer-options">
+        <legend>Склад архіву</legend>
+        <label
+          v-for="option in [
+            {
+              value: 'document',
+              title: 'Файли документа',
+              description: 'Вихідні файли та ресурси.',
+            },
+            {
+              value: 'project',
+              title: 'Копія проєкту',
+              description: 'Файли, контекст, матеріали й коментарі.',
+            },
+          ]"
+          :key="option.value"
+          class="transfer-option"
+        >
+          <input
+            v-model="exportProfile"
+            type="radio"
+            name="transfer-profile"
+            :value="option.value"
+            :disabled="busy"
+            :aria-describedby="'transfer-option-' + option.value"
+          />
+          <span>
+            <strong>{{ option.title }}</strong>
+            <small :id="'transfer-option-' + option.value">{{ option.description }}</small>
+          </span>
+        </label>
+      </fieldset>
+      <template v-else>
+        <label class="transfer-check">
+          <input v-model="includeContext" type="checkbox" :disabled="busy" />
+          Додати контекст і матеріали
+        </label>
+        <label class="transfer-check">
+          <input v-model="includeAnnotations" type="checkbox" :disabled="busy" />
+          Додати коментарі
+        </label>
+      </template>
       <p v-if="error" class="form-message form-error" role="alert">
         {{ error }}
         <RouterLink v-if="mode === 'template'" to="/templates?tab=owned">Мої шаблони</RouterLink>
