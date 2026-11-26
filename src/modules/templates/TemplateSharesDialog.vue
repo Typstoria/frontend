@@ -7,6 +7,7 @@ const props = defineProps<{
   templateId: number;
   includesContext: boolean;
   includesAnnotations: boolean;
+  returnFocus: HTMLElement | null;
 }>();
 const emit = defineEmits<{ dismiss: [] }>();
 const api = createTemplatesApi();
@@ -113,6 +114,7 @@ function status(share: Share) {
     :open="true"
     title="Поширити шаблон"
     :busy="busy"
+    :return-focus="returnFocus"
     dialog-class="template-share-dialog"
     @dismiss="emit('dismiss')"
   >

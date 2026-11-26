@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { expect, test } from '@playwright/test';
 import type { Page, Route } from '@playwright/test';
 import type { Changes } from '../../src/modules/workspace/workspace-api';
+import { pauseAutosaveClock, replaceSourceText } from './source-input';
 import { installWorkspaceStartupMock } from './workspace-startup-fixture';
 
 const user = {
@@ -37,6 +38,7 @@ type Upload = {
   sha256: string;
   bytes: Uint8Array;
 };
+type CapturedUpload = { filename: string; mediaType: string; bytes: number[] };
 type Server = {
   revisionId: number;
   mainFileId: number;
@@ -201,6 +203,36 @@ async function installApi(
   const bodies: Changes[] = [];
   const keys: (string | undefined)[] = [];
   const requestedRevisions: number[] = [];
+  const revisions = new Map<number, Server>();
+  function revisionAt(revisionId: number) {
+    const revision = revisionId === server.revisionId ? server : revisions.get(revisionId);
+    expect(revision, `Fixture revision ${revisionId}`).toBeDefined();
+    return revision!;
+  }
+  const capturedUploads: CapturedUpload[] = [];
+  await page.exposeFunction('captureResourceUpload', (upload: CapturedUpload) => {
+    capturedUploads.push(upload);
+  });
+  await page.addInitScript(() => {
+    const transport = window.fetch.bind(window);
+    const browser = window as typeof window & {
+      captureResourceUpload: (upload: CapturedUpload) => Promise<void>;
+    };
+    window.fetch = async (input, init) => {
+      if (input === '/api/projects/1/uploads' && init?.body instanceof FormData) {
+        const file = init.body.get('file');
+        if (file instanceof File) {
+          // Browser request interception can omit file bytes even though they are sent.
+          await browser.captureResourceUpload({
+            filename: file.name,
+            mediaType: file.type,
+            bytes: Array.from(new Uint8Array(await file.arrayBuffer())),
+          });
+        }
+      }
+      return transport(input, init);
+    };
+  });
   let uploadCalls = 0;
   let postCalls = 0;
   let downloadCalls = 0;
@@ -210,19 +242,16 @@ async function installApi(
   );
   await page.route('**/api/projects/1/state**', (route) => {
     const revision = new URL(route.request().url()).searchParams.get('revisionId');
-    if (revision !== null) {
-      requestedRevisions.push(Number(revision));
-      expect(Number(revision)).toBe(server.revisionId);
-    }
-    return route.fulfill({ json: snapshot(server) });
+    if (revision === null) return route.fulfill({ json: snapshot(server) });
+    requestedRevisions.push(Number(revision));
+    return route.fulfill({ json: snapshot(revisionAt(Number(revision))) });
   });
   await page.route('**/api/projects/1/files/*/download**', (route) => {
     const url = new URL(route.request().url());
     const fileId = Number(url.pathname.split('/').at(-2));
     const revisionId = Number(url.searchParams.get('revisionId'));
-    const file = server.files.find((entry) => entry.fileId === fileId);
+    const file = revisionAt(revisionId).files.find((entry) => entry.fileId === fileId);
     expect(file?.contentKind).toBe('binary');
-    expect(revisionId).toBe(server.revisionId);
     expect(route.request().headers().authorization).toBe('Bearer 1.workspace-context-secret');
     expect(route.request().headers().accept).toBe('application/octet-stream');
     downloadCalls++;
@@ -236,9 +265,8 @@ async function installApi(
     const url = new URL(route.request().url());
     const fileId = Number(url.pathname.split('/').at(-1));
     const revisionId = Number(url.searchParams.get('revisionId'));
-    const file = server.files.find((entry) => entry.fileId === fileId);
+    const file = revisionAt(revisionId).files.find((entry) => entry.fileId === fileId);
     expect(file?.contentKind).toBe('text');
-    expect(revisionId).toBe(server.revisionId);
     return route.fulfill({ json: { ...file, revisionId } });
   });
   await page.route('**/api/projects/1/uploads', async (route) => {
@@ -246,14 +274,12 @@ async function installApi(
     const headers = route.request().headers();
     expect(headers.authorization).toBe('Bearer 1.workspace-context-secret');
     expect(headers['content-type']).toMatch(/^multipart\/form-data; boundary=/);
-    const raw = route.request().postDataBuffer()?.toString('latin1') ?? '';
-    const filename = /filename="([^"]+)"/.exec(raw)?.[1];
-    expect(filename).toBeTruthy();
-    const blob = raw.split('\r\n\r\n').at(-1)?.split('\r\n--').at(0) ?? '';
-    const bytes = Buffer.from(blob, 'latin1');
-    const mediaType = filename!.endsWith('.png') ? 'image/png' : 'application/pdf';
+    const upload = capturedUploads.shift();
+    expect(upload).toBeDefined();
+    const { filename, mediaType } = upload!;
+    const bytes = Buffer.from(upload!.bytes);
     const uploadId = server.nextUploadId++;
-    const staged: Upload = { uploadId, filename: filename!, mediaType, sha256: hash, bytes };
+    const staged: Upload = { uploadId, filename, mediaType, sha256: hash, bytes };
     server.uploads.set(uploadId, staged);
     return route.fulfill({
       status: 201,
@@ -273,6 +299,7 @@ async function installApi(
     const body = route.request().postDataJSON() as Changes;
     bodies.push(structuredClone(body));
     keys.push(route.request().headers()['idempotency-key']);
+    revisions.set(server.revisionId, structuredClone(server));
     if (hooks.beforeSave && (await hooks.beforeSave(route, body, server, postCalls))) return;
     await route.fulfill({ json: apply(server, body) });
   });
@@ -421,11 +448,18 @@ test('saves project context with text and reloads the accepted context', async (
   await installSession(page);
   const api = await installApi(page);
   await openWorkspace(page);
-  await sourceEditor(page).fill('# Змінений документ');
-  await page.getByRole('button', { name: 'Контекст', exact: true }).click();
+  await expect(sourceEditor(page)).toContainText('# Початок');
   const context = page.getByLabel('Контекст проєкту', { exact: true });
-  await context.fill('Домовленість: використовувати українську мову.');
-  await context.press(process.platform === 'darwin' ? 'Meta+s' : 'Control+s');
+  await pauseAutosaveClock(page);
+  try {
+    await replaceSourceText(sourceEditor(page), '# Змінений документ');
+    await page.getByRole('button', { name: 'Контекст', exact: true }).press('Enter');
+    await context.fill('Домовленість: використовувати українську мову.');
+    await context.press('ControlOrMeta+s');
+    await expect.poll(() => api.bodies.length).toBe(1);
+  } finally {
+    await page.clock.resume();
+  }
   await expect(page.locator('.editor-save-status')).toContainText('Збережено');
   expect(api.bodies).toHaveLength(1);
   expect(api.bodies[0]!.operations).toEqual([

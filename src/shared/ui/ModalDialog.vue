@@ -1,14 +1,22 @@
 <script setup lang="ts">
 import { onBeforeUnmount, useId } from 'vue';
 
-const props = defineProps<{ open: boolean; title: string; busy?: boolean; dialogClass?: string }>();
+const props = defineProps<{
+  open: boolean;
+  title: string;
+  busy?: boolean;
+  dialogClass?: string;
+  returnFocus?: HTMLElement | null;
+}>();
 const emit = defineEmits<{ dismiss: []; closed: [] }>();
 const titleId = useId();
 let dialog: HTMLDialogElement | null = null;
 let previousFocus: HTMLElement | null = null;
 
 function enter(element: Element) {
-  previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  previousFocus =
+    props.returnFocus ??
+    (document.activeElement instanceof HTMLElement ? document.activeElement : null);
   dialog = element as HTMLDialogElement;
   dialog.showModal();
 }
@@ -16,6 +24,7 @@ function close() {
   dialog?.close();
   dialog = null;
   if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
+  previousFocus = null;
 }
 function afterLeave() {
   close();

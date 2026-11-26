@@ -14,6 +14,7 @@ const error = ref('');
 const notice = ref('');
 const dialog = ref<'name' | 'password' | 'delete' | null>(null);
 const dialogOpen = ref(false);
+const dialogTrigger = ref<HTMLElement | null>(null);
 const busy = ref(false);
 const name = ref('');
 const currentPassword = ref('');
@@ -44,8 +45,9 @@ async function load() {
     loading.value = false;
   }
 }
-function open(kind: 'name' | 'password' | 'delete') {
+function open(kind: 'name' | 'password' | 'delete', event: MouseEvent) {
   if (!account.value || loading.value || busy.value || dialog.value) return;
+  dialogTrigger.value = event.currentTarget as HTMLButtonElement;
   dialog.value = kind;
   name.value = user.value?.name ?? '';
   fieldError.value = '';
@@ -144,7 +146,7 @@ onBeforeUnmount(() => {
           class="button button-secondary"
           :disabled="!account || loading"
           aria-label="Редагувати ім’я"
-          @click="open('name')"
+          @click="open('name', $event)"
         >
           Редагувати
         </button>
@@ -177,14 +179,16 @@ onBeforeUnmount(() => {
         aria-labelledby="account-password-label"
       >
         <h2 id="account-password-label">Пароль</h2>
-        <button class="button button-secondary" @click="open('password')">Змінити пароль</button>
+        <button class="button button-secondary" @click="open('password', $event)">
+          Змінити пароль
+        </button>
       </section>
       <section class="account-setting" aria-labelledby="account-delete-label">
         <h2 id="account-delete-label">Видалення акаунта</h2>
         <button
           class="button button-secondary danger-text"
           :disabled="!account || loading || cooldown > 0"
-          @click="open('delete')"
+          @click="open('delete', $event)"
         >
           Видалити акаунт
         </button>
@@ -201,6 +205,7 @@ onBeforeUnmount(() => {
       :open="dialogOpen"
       :title="dialogTitle"
       :busy="busy"
+      :return-focus="dialogTrigger"
       @dismiss="dismiss"
       @closed="closed"
     >

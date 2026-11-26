@@ -350,7 +350,7 @@ test('sends the localhost referrer required by Google Identity Services', async 
   );
   await page.goto('/auth/login');
   const request = await sdkRequest;
-  expect(new URL(request.headers().referer!).origin).toBe('http://localhost:5174');
+  expect(new URL(request.headers().referer!).origin).toBe(new URL(page.url()).origin);
   await expect(page.locator('meta[name="referrer"]')).toHaveAttribute(
     'content',
     'no-referrer-when-downgrade',

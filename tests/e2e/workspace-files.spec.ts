@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import type { Page, Route } from '@playwright/test';
 import type { Changes } from '../../src/modules/workspace/workspace-api';
+import { pauseAutosaveClock, replaceSourceText } from './source-input';
 import { installWorkspaceStartupMock } from './workspace-startup-fixture';
 
 const user = {
@@ -195,6 +196,12 @@ async function installApi(
   const stateRevisionReads: number[] = [];
   const bodies: Changes[] = [];
   const keys: (string | undefined)[] = [];
+  const revisions = new Map<number, Server>();
+  function revisionAt(revisionId: number) {
+    const revision = revisionId === server.revisionId ? server : revisions.get(revisionId);
+    expect(revision, `Fixture revision ${revisionId}`).toBeDefined();
+    return revision!;
+  }
   let postCalls = 0;
   let stateFailures = 0;
   await installWorkspaceStartupMock(page, server.revisionId);
@@ -204,24 +211,22 @@ async function installApi(
   await page.route('**/api/projects/1/state**', async (route) => {
     const url = new URL(route.request().url());
     const requestedRevision = url.searchParams.get('revisionId');
-    if (requestedRevision !== null) {
-      stateRevisionReads.push(Number(requestedRevision));
-      expect(Number(requestedRevision)).toBe(server.revisionId);
-    }
-    if (stateFailures > 0) {
+    const revisionId = requestedRevision === null ? server.revisionId : Number(requestedRevision);
+    if (requestedRevision !== null) stateRevisionReads.push(revisionId);
+    if (stateFailures > 0 && revisionId === server.revisionId) {
       stateFailures--;
       await route.fulfill({ status: 503, json: apiError() });
       return;
     }
-    await route.fulfill({ json: snapshot(server) });
+    await route.fulfill({ json: snapshot(revisionAt(revisionId)) });
   });
   await page.route('**/api/projects/1/files/*', async (route) => {
     const url = new URL(route.request().url());
     const fileId = Number(url.pathname.split('/').at(-1));
     const revisionId = Number(url.searchParams.get('revisionId'));
-    expect(revisionId).toBe(server.revisionId);
-    if (hooks.beforeText && (await hooks.beforeText(route, fileId, revisionId, server))) return;
-    const file = server.files.find((entry) => entry.fileId === fileId);
+    const revision = revisionAt(revisionId);
+    if (hooks.beforeText && (await hooks.beforeText(route, fileId, revisionId, revision))) return;
+    const file = revision.files.find((entry) => entry.fileId === fileId);
     expect(file).toBeDefined();
     return route.fulfill({ json: { ...file, revisionId } });
   });
@@ -230,6 +235,7 @@ async function installApi(
     const body = route.request().postDataJSON() as Changes;
     bodies.push(structuredClone(body));
     keys.push(route.request().headers()['idempotency-key']);
+    revisions.set(server.revisionId, structuredClone(server));
     if (hooks.beforeSave && (await hooks.beforeSave(route, body, server, postCalls))) return;
     await route.fulfill({ json: apply(server, body) });
   });
@@ -261,11 +267,14 @@ async function openWorkspace(page: Page) {
   }
 }
 
-async function showFiles(page: Page) {
+async function showFiles(page: Page, useKeyboard = false) {
   const viewportWidth = await page.evaluate(() => window.innerWidth);
   if (viewportWidth <= 720) {
     const toggle = page.getByRole('button', { name: /(?:Показати|Приховати) файли/ });
-    if ((await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click();
+    if ((await toggle.getAttribute('aria-expanded')) !== 'true') {
+      if (useKeyboard) await toggle.press('Enter');
+      else await toggle.click();
+    }
   }
 }
 
@@ -304,19 +313,22 @@ async function submitNewFile(page: Page) {
     .click();
 }
 
-async function fileMenu(
+async function chooseFileMenuItem(
   page: Page,
   path: string,
   action: string,
   useKeyboard = false,
   folder = false,
 ) {
-  await showFiles(page);
+  await showFiles(page, useKeyboard);
   const width = await page.evaluate(() => window.innerWidth);
   if (width <= 720) {
-    await page
-      .getByRole('button', { name: `Дії з ${folder ? 'папкою' : 'файлом'}: ${path}`, exact: true })
-      .click();
+    const trigger = page.getByRole('button', {
+      name: `Дії з ${folder ? 'папкою' : 'файлом'}: ${path}`,
+      exact: true,
+    });
+    if (useKeyboard) await trigger.press('Enter');
+    else await trigger.click();
   } else {
     const row = page.getByRole('button', { name: path, exact: true });
     if (useKeyboard) {
@@ -326,9 +338,22 @@ async function fileMenu(
       await row.click({ button: 'right' });
     }
   }
-  await page.getByRole('menuitem', { name: action, exact: true }).click();
+  const item = page.getByRole('menuitem', { name: action, exact: true });
+  if (useKeyboard) await item.press('Enter');
+  else await item.click();
+}
+
+async function fileMenu(
+  page: Page,
+  path: string,
+  action: string,
+  useKeyboard = false,
+  folder = false,
+) {
+  const mobile = await mobileLayout(page);
+  await chooseFileMenuItem(page, path, action, useKeyboard && !mobile, folder);
   await expect(page.getByRole('dialog', { name: 'Файли', exact: true })).toHaveCount(0);
-  if (width <= 720 || !['Перейменувати файл', 'Перейменувати папку'].includes(action))
+  if (mobile || !['Перейменувати файл', 'Перейменувати папку'].includes(action))
     await expect(page.getByRole('dialog')).toBeVisible();
   else
     await expect(
@@ -438,6 +463,7 @@ test('renames and moves a file while preserving its file ID and content', async 
   await expect(editor(page)).toContainText('Нотатки');
   await showFiles(page);
   await page.getByRole('button', { name: 'main.typ', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Файли', exact: true })).toHaveCount(0);
   await expect(editor(page)).toContainText('Початок');
   await fileMenu(page, 'notes.typ', 'Перейменувати файл', true);
   await page.getByLabel('Назва файла', { exact: true }).fill('notes-renamed.typ');
@@ -665,12 +691,17 @@ test('opens workspace menus with the keyboard and confirms project deletion expl
   await expect(page.getByRole('dialog', { name: 'Перейменувати проєкт' })).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'Нова назва проєкту' })).toBeVisible();
 
-  await editor(page).fill('Локальний текст');
   const openDelete = async () => {
     await openGroup('Проєкт');
-    await page.getByRole('menuitem', { name: 'Видалити проєкт…', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Видалити проєкт…', exact: true }).press('Enter');
   };
-  await openDelete();
+  await pauseAutosaveClock(page);
+  try {
+    await replaceSourceText(editor(page), 'Локальний текст');
+    await openDelete();
+  } finally {
+    await page.clock.resume();
+  }
   const confirmation = page.getByRole('dialog', { name: 'Видалити проєкт?' });
   await expect(confirmation).toContainText('Незбережені правки буде втрачено.');
   await expect(confirmation.getByRole('button', { name: 'Скасувати' })).toBeFocused();
@@ -690,9 +721,15 @@ test('deletes a dirty main file and selects its replacement in one atomic batch'
   await installSession(page);
   const api = await installApi(page);
   await openWorkspace(page);
-  await editor(page).fill('# Локальна зміна перед видаленням');
-  await expect(page.locator('.editor-save-status')).toContainText('Незбережені зміни');
-  await fileMenu(page, 'main.typ', 'Видалити файл');
+  await expect(editor(page)).toBeEditable();
+  await pauseAutosaveClock(page);
+  try {
+    await replaceSourceText(editor(page), '# Локальна зміна перед видаленням');
+    await expect(page.locator('.editor-save-status')).toContainText('Незбережені зміни');
+    await chooseFileMenuItem(page, 'main.typ', 'Видалити файл', true);
+  } finally {
+    await page.clock.resume();
+  }
   await expect(page.getByRole('heading', { name: 'Видалити файл?', exact: true })).toBeVisible();
   await page
     .getByLabel('Новий головний файл', { exact: true })
@@ -749,11 +786,22 @@ test('saves existing dirty text and a new file in the same batch', async ({ page
   await installSession(page);
   const api = await installApi(page);
   await openWorkspace(page);
-  await editor(page).fill('# Зміна тексту');
-  await expect(page.locator('.editor-save-status')).toContainText('Незбережені зміни');
-  await openNewFileDialog(page);
-  if (await mobileLayout(page))
-    await expect(page.getByLabel('Папка', { exact: true })).toHaveValue('');
+  const mobile = await mobileLayout(page);
+  await expect(editor(page)).toBeEditable();
+  await pauseAutosaveClock(page);
+  try {
+    await replaceSourceText(editor(page), '# Зміна тексту');
+    await expect(page.locator('.editor-save-status')).toContainText('Незбережені зміни');
+    if (mobile) {
+      await page.getByRole('button', { name: 'Показати файли', exact: true }).press('Enter');
+      await page.clock.runFor(40);
+    }
+    await page.getByRole('button', { name: 'Додати до проєкту', exact: true }).press('ArrowDown');
+    await page.getByRole('menuitem', { name: 'Створити файл', exact: true }).press('Enter');
+  } finally {
+    await page.clock.resume();
+  }
+  if (mobile) await expect(page.getByLabel('Папка', { exact: true })).toHaveValue('');
   await page.getByLabel('Назва файла', { exact: true }).fill('appendix.typ');
   await submitNewFile(page);
   expect(api.bodies).toHaveLength(1);

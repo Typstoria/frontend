@@ -311,7 +311,7 @@ test('manages owned shares, downloads the ZIP and deletes the template', async (
     expect((await button.boundingBox())!.width).toBeGreaterThanOrEqual(44);
   }
   await downloadButton.click();
-  expect((await download).suggestedFilename()).toBe('Мій звіт.zip');
+  expect((await download).suggestedFilename().normalize('NFC')).toBe('Мій звіт.zip');
   await shareButton.click();
   await expect(page.getByText('Посилань ще немає.')).toBeVisible();
   await page.getByRole('button', { name: 'Створити посилання' }).click();
@@ -464,5 +464,5 @@ test('creates a template and exports ZIP from the saved workspace revision', asy
   await page.screenshot({ path: info.outputPath('export.png') });
   const download = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Завантажити ZIP' }).click();
-  expect((await download).suggestedFilename()).toBe('Звіт.zip');
+  expect((await download).suggestedFilename().normalize('NFC')).toBe('Звіт.zip');
 });

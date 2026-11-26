@@ -509,6 +509,7 @@ function runWorkspaceCommand(id: string, trigger: HTMLElement) {
       filesVisible.value = false;
       return;
     }
+    filesDrawerTrigger.value = trigger;
     filesVisible.value = true;
   } else if (id === 'code' || id === 'split' || id === 'preview') viewMode.value = id;
   else if (id === 'outline') outlineOpen.value = true;
@@ -1157,6 +1158,7 @@ function downloadPdf(artifact: NonNullable<typeof compilation.state.artifact>) {
 }
 const desktopFilesVisible = ref(preferences.project.filesVisible);
 const mobileFilesVisible = ref(false);
+const filesDrawerTrigger = ref<HTMLElement | null>(null);
 const collapsedPaths = ref<string[]>([]);
 const treeSelection = ref<number | string | null>(null);
 const selectedTreeFile = computed(() =>
@@ -1717,7 +1719,12 @@ async function openMainFile() {
   if (isMobile.value && activeTab.value === id)
     document.getElementById(`workspace-tab-${id}`)?.focus({ preventScroll: true });
 }
-async function showFilesFromEmptyEditor() {
+function toggleFiles(event: MouseEvent) {
+  if (!filesVisible.value) filesDrawerTrigger.value = event.currentTarget as HTMLButtonElement;
+  filesVisible.value = !filesVisible.value;
+}
+async function showFilesFromEmptyEditor(event: MouseEvent) {
+  filesDrawerTrigger.value = event.currentTarget as HTMLButtonElement;
   filesVisible.value = true;
   if (!isMobile.value) {
     await nextTick();
@@ -1895,7 +1902,7 @@ onBeforeUnmount(() => {
           :aria-label="filesVisible ? 'Приховати файли' : 'Показати файли'"
           :title="filesVisible ? 'Приховати файли' : 'Показати файли'"
           :disabled="!!inlineName"
-          @click="filesVisible = !filesVisible"
+          @click="toggleFiles"
         >
           <svg
             viewBox="0 0 20 20"
@@ -2597,6 +2604,7 @@ onBeforeUnmount(() => {
         <ModalDialog
           :open="isMobile && mobileFilesVisible && !state.conflict"
           title="Файли"
+          :return-focus="filesDrawerTrigger"
           @dismiss="mobileFilesVisible = false"
           @closed="fileDrawerClosed"
         >

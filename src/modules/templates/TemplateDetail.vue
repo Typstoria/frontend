@@ -27,6 +27,7 @@ const error = ref('');
 const downloadError = ref('');
 const downloading = ref(false);
 const dialog = ref<'copy' | 'shares' | 'delete' | null>(null);
+const shareTrigger = ref<HTMLButtonElement | null>(null);
 const deleting = ref(false);
 const deleteError = ref('');
 const heading = ref<HTMLElement | null>(null);
@@ -140,6 +141,7 @@ async function remove() {
           </button>
           <button
             v-if="source.kind === 'owned'"
+            ref="shareTrigger"
             class="button button-secondary template-action-icon"
             aria-label="Поширити"
             title="Поширити"
@@ -230,6 +232,7 @@ async function remove() {
         :template-id="source.id"
         :includes-context="preview.includeContext"
         :includes-annotations="preview.annotationCount > 0"
+        :return-focus="shareTrigger"
         @dismiss="dialog = null"
       />
       <ModalDialog

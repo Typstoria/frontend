@@ -287,14 +287,16 @@ test('animates dialog entry and exit, restores focus, and respects reduced motio
   page,
 }, testInfo) => {
   await signIn(page);
-  await page.getByRole('button', { name: 'Редагувати ім’я', exact: true }).click();
+  const editName = page.getByRole('button', { name: 'Редагувати ім’я', exact: true });
+  if (testInfo.project.use.hasTouch) await editName.tap();
+  else await editName.click();
   await expect(page.locator('.modal-enter-active')).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath('name-dialog.png'), fullPage: true });
   await page.getByRole('button', { name: 'Скасувати', exact: true }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Редагувати ім’я', exact: true })).toBeFocused();
+  await expect(editName).toBeFocused();
   await page.emulateMedia({ reducedMotion: 'reduce' });
-  await page.getByRole('button', { name: 'Редагувати ім’я', exact: true }).click();
+  await editName.press('Enter');
   await expect(page.getByRole('dialog')).toBeVisible();
   expect(
     await page
@@ -303,4 +305,5 @@ test('animates dialog entry and exit, restores focus, and respects reduced motio
   ).toBe('0s');
   await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(editName).toBeFocused();
 });

@@ -298,6 +298,7 @@ onBeforeUnmount(() => {
       class="workspace-tab-menu"
       role="menu"
       :style="{ left: `${menu.x}px`, top: `${menu.y}px` }"
+      @mousedown.left.prevent
       @keydown="onMenuKeydown"
       @focusout="dismissOnFocusOut"
     >

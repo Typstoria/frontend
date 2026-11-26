@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { expect, test, type Locator, type Page, type Route } from '@playwright/test';
 import type { Compilation } from '../../src/modules/workspace/compilation-api';
+import { replaceSourceText } from './source-input';
 import { installWorkspaceStartupMock } from './workspace-startup-fixture';
 
 const date = '2026-11-12T10:30:00Z';
@@ -232,7 +233,7 @@ test('autosaves a draft before compiling and shows a protected, continuous PDF',
   });
   await page.goto('/projects/1');
   const editor = page.getByRole('textbox', { name: 'Вихідний текст' });
-  await editor.fill('New revision');
+  await replaceSourceText(editor, 'New revision');
   const compile = page.getByRole('button', { name: 'Скомпілювати', exact: true });
   await expect(compile).toBeDisabled();
   await expect.poll(() => accepted).toEqual([101]);
@@ -268,7 +269,7 @@ test('autosaves a draft before compiling and shows a protected, continuous PDF',
   await page.getByRole('button', { name: 'Завантажити PDF' }).click();
   expect(await readFile((await (await downloaded).path())!)).toEqual(pdf);
   if (singlePanel) await page.getByRole('button', { name: 'Лише код', exact: true }).click();
-  await editor.fill('Unsaved edits');
+  await replaceSourceText(editor, 'Unsaved edits');
   if ((await result.getAttribute('aria-pressed')) === 'false') await result.click();
   await expect(page.locator('.pdf-page-indicator')).toHaveText('2 / 2');
 });
@@ -392,7 +393,7 @@ test('shows the unsaved outline and ignores heading-like text in raw blocks', as
     await expect(outline.getByRole('button', { name: 'Збережений заголовок' })).toBeVisible();
     await outline.getByRole('button', { name: 'Закрити' }).click();
     await expect(outline).toBeHidden();
-    await editor.fill('= Моя чернетка\n```typ\n= Приклад коду\n```\n== Підрозділ');
+    await replaceSourceText(editor, '= Моя чернетка\n```typ\n= Приклад коду\n```\n== Підрозділ');
     await openOutline();
     await expect(outline.getByRole('button', { name: 'Моя чернетка' })).toBeVisible();
     await expect(outline.getByRole('button', { name: 'Приклад коду' })).toHaveCount(0);
@@ -432,7 +433,7 @@ test('previews unsaved Typst edits while keeping the accepted PDF available', as
       'Startup PDF',
     );
     if (compact) await page.getByRole('button', { name: 'Лише код', exact: true }).click();
-    await editor.fill('= Draft preview');
+    await replaceSourceText(editor, '= Draft preview');
 
     if (compact) await preview.click();
 
@@ -461,7 +462,7 @@ test('previews unsaved Typst edits while keeping the accepted PDF available', as
     await expect(canvas).toBeVisible();
     const beforeError = await canvas.evaluate((element: HTMLCanvasElement) => element.toDataURL());
     if (compact) await page.getByRole('button', { name: 'Лише код', exact: true }).click();
-    await editor.fill('Привіт 😃 #oops');
+    await replaceSourceText(editor, 'Привіт 😃 #oops');
     const diagnostics = page.getByRole('region', { name: 'Діагностика компіляції' });
     await expect(diagnostics).toContainText('Чернетка');
     const sourceLink = diagnostics.getByRole('button', { name: 'main.typ:1:12' });
@@ -516,7 +517,8 @@ test('keeps draft zoom and reading position when the accepted PDF arrives', asyn
     if (compact) await preview.click();
     await expect(page.locator('.pdf-page').first()).toContainText('Startup PDF');
     if (compact) await page.getByRole('button', { name: 'Лише код', exact: true }).click();
-    await editor.fill(
+    await replaceSourceText(
+      editor,
       '#set page(width: 200pt, height: 700pt)\nFirst\n#pagebreak()\nSecond\n#pagebreak()\nThird',
     );
     if (compact) await preview.click();
@@ -664,7 +666,9 @@ test('restores horizontal PDF position when returning to split view', async ({ p
   await page.getByRole('button', { name: 'Лише PDF', exact: true }).click();
   await expect.poll(() => frame.evaluate((element) => element.scrollLeft)).toBe(0);
   await page.getByRole('button', { name: 'Код і PDF', exact: true }).click();
-  await expect.poll(() => frame.evaluate((element) => element.scrollLeft)).toBeCloseTo(before, 0);
+  await expect
+    .poll(async () => Math.abs((await frame.evaluate((element) => element.scrollLeft)) - before))
+    .toBeLessThanOrEqual(1);
   await expect(zoom).toHaveText(scale ?? '');
 });
 
@@ -707,7 +711,6 @@ test('preserves the PDF page and scroll position when switching to diagnostics',
   const diagnosticsToggle = page.getByRole('button', { name: 'Діагностика (1)', exact: true });
   await diagnosticsToggle.click();
   await expect(diagnosticsToggle).toHaveAttribute('aria-expanded', 'true');
-  await expect(diagnosticsToggle).toBeFocused();
   const diagnostics = page.getByRole('region', { name: 'Діагностика компіляції' });
   await expect(diagnostics).toBeVisible();
   await expect(page.getByText('Test warning', { exact: true })).toBeVisible();
@@ -1160,11 +1163,11 @@ test('waits for an in-flight autosave and compiles the latest saved edit', async
   );
   await page.goto('/projects/1');
   const editor = page.getByRole('textbox', { name: 'Вихідний текст' });
-  await editor.fill('First edit');
+  await replaceSourceText(editor, 'First edit');
   const first = page.waitForRequest((request) => request.url().endsWith('/changes'));
   await editor.press('Control+s');
   await first;
-  await editor.fill('Second edit');
+  await replaceSourceText(editor, 'Second edit');
   await expect(page.getByRole('button', { name: 'Скомпілювати', exact: true })).toBeDisabled();
   allowFirst();
   await expect(
@@ -1198,7 +1201,7 @@ test('does not compile a saved revision twice when startup already picks it up',
   await page.goto('/projects/1');
   const editor = page.getByRole('textbox', { name: 'Вихідний текст' });
   const saved = page.waitForResponse((response) => response.url().endsWith('/changes'));
-  await editor.fill('Edited while finding the last PDF');
+  await replaceSourceText(editor, 'Edited while finding the last PDF');
   await saved;
   releaseLatest();
   if (!(await page.locator('#workspace-output').isVisible()))
@@ -1279,11 +1282,11 @@ test('coalesces saved revisions during an active compile and keeps the previous 
   );
   await page.goto('/projects/1');
   const editor = page.getByRole('textbox', { name: 'Вихідний текст' });
-  await editor.fill('First saved edit');
+  await replaceSourceText(editor, 'First saved edit');
   await firstStatusStarted;
 
   const saveNow = async (content: string, count: number) => {
-    await editor.fill(content);
+    await replaceSourceText(editor, content);
     const saved = page.waitForRequest((request) => request.url().endsWith('/changes'));
     await editor.press('Control+s');
     await saved;

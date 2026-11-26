@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { replaceSourceText } from './source-input';
 import { installWorkspaceStartupMock } from './workspace-startup-fixture';
 
 const date = '2026-11-12T10:30:00Z';
@@ -167,7 +168,8 @@ test('completes an unsaved buffer, formats it, and opens a project definition', 
   try {
     await page.goto('/projects/1');
     const editor = page.getByRole('textbox', { name: 'Вихідний текст' });
-    await editor.fill('#rg');
+    await editor.press('ControlOrMeta+a');
+    await editor.pressSequentially('#rg');
     await editor.press('End');
     const option = page.getByRole('option', { name: /rgb/ });
     await expect(option).toBeVisible();
@@ -244,7 +246,7 @@ test('drops formatting when the buffer changes before the reply', async ({ page 
     const query = page.waitForRequest('**/api/editor-sessions/*/query');
     await languageCommand(page, info.project.name === 'mobile', 'Форматувати файл');
     await query;
-    await editor.fill('Новий текст');
+    await replaceSourceText(editor, 'Новий текст');
     const response = page.waitForResponse('**/api/editor-sessions/*/query');
     releaseFormatting();
     await response;

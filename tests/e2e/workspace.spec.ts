@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 import type { Page, Route } from '@playwright/test';
 import type { Changes } from '../../src/modules/workspace/workspace-api';
 import { readFile } from 'node:fs/promises';
+import { pasteSourceText, pauseAutosaveClock, replaceSourceText } from './source-input';
 import { installWorkspaceStartupMock } from './workspace-startup-fixture';
 
 const user = {
@@ -173,15 +174,22 @@ test('opens a private project from its list and reloads accepted Unicode text wi
   const editor = await sourceEditor(page);
   await expect(editor).toContainText('# Початок');
   const edited = '# Початок\n🙂 Український текст';
-  await editor.fill(edited);
-  expect(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)).toBe(
-    false,
-  );
-  await expect(page.locator('.editor-save-status')).toContainText('Незбережені зміни');
-  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z');
-  await expect(editor).toContainText('# Початок');
-  await editor.fill(edited);
-  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+s' : 'Control+s');
+  await pauseAutosaveClock(page);
+  try {
+    await replaceSourceText(editor, edited);
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth),
+    ).toBe(false);
+    await expect(page.locator('.editor-save-status')).toContainText('Незбережені зміни');
+    await editor.press('ControlOrMeta+z');
+    await expect(editor).toContainText('# Початок');
+    await expect(editor).not.toContainText('🙂 Український текст');
+    await replaceSourceText(editor, edited);
+    await editor.press('ControlOrMeta+s');
+    await expect.poll(() => accepted).toBe(edited);
+  } finally {
+    await page.clock.resume();
+  }
   await expect(page.locator('.editor-save-status')).toContainText('Збережено');
   await page.reload();
   await expect(await sourceEditor(page)).toContainText('🙂 Український текст');
@@ -209,9 +217,9 @@ test('saves one immutable batch while later edits and file switching wait for th
   });
   await openWorkspace(page);
   const editor = await sourceEditor(page);
-  await editor.fill('# batch one');
+  await replaceSourceText(editor, '# batch one');
   await expect.poll(() => batches.length).toBe(1);
-  await editor.fill('# batch one\n# batch two');
+  await replaceSourceText(editor, '# batch one\n# batch two');
   await selectFile(page, 'notes.typ');
   await expect(page.getByLabel('Вихідний текст', { exact: true })).toContainText('Нотатки');
   await selectFile(page, 'main.typ');
@@ -240,7 +248,7 @@ test('indents selected lines without replacing text and lets keyboard focus leav
   await installWorkspaceApi(page);
   await openWorkspace(page);
   const editor = await sourceEditor(page);
-  await editor.fill('Перший рядок 🙂\nДругий рядок');
+  await replaceSourceText(editor, 'Перший рядок 🙂\nДругий рядок');
   await editor.press(process.platform === 'darwin' ? 'Meta+a' : 'Control+a');
   await editor.press('Tab');
   const lines = () => editor.locator('.cm-line').allTextContents();
@@ -265,7 +273,7 @@ test('pauses autosave during IME composition and schedules it after composition 
   const { saveCalls } = await installWorkspaceApi(page);
   await openWorkspace(page);
   const editor = await sourceEditor(page);
-  await editor.fill('# Текст для введення');
+  await replaceSourceText(editor, '# Текст для введення');
   await editor.dispatchEvent('compositionstart');
   await page.waitForTimeout(1100);
   expect(saveCalls()).toBe(0);
@@ -323,7 +331,7 @@ test('restores the cursor, undo and viewport when returning to a file', async ({
   const editor = await sourceEditor(page);
   await editor.click();
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+End' : 'Control+End');
-  await page.keyboard.insertText(' marker');
+  await pasteSourceText(editor, ' marker');
   const scroller = page.locator('.editor-source .cm-scroller');
   await expect.poll(() => scroller.evaluate((element) => element.scrollTop)).toBeGreaterThan(500);
   const previousTop = await scroller.evaluate((element) => element.scrollTop);
@@ -340,18 +348,21 @@ test('restores the cursor, undo and viewport when returning to a file', async ({
 
 test('keeps one context tab and preserves a closed file draft and undo history', async ({
   page,
-}) => {
+}, testInfo) => {
   await installSession(page);
-  await installWorkspaceApi(page);
+  await installWorkspaceApi(page, {
+    // Keep the note a local draft even if autosave fires during the tab and history actions.
+    save: async (route) => route.fulfill({ status: 503, json: apiError() }),
+  });
   await openWorkspace(page);
 
   const editor = await sourceEditor(page);
   const tabs = page.getByRole('tablist', { name: 'Відкриті файли', exact: true });
   await selectFile(page, 'notes.typ');
   await expect(tabs.getByRole('tab', { name: 'notes.typ', exact: true })).toBeVisible();
-  await editor.focus();
-  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+End' : 'Control+End');
-  await page.keyboard.insertText('чернетка');
+  await expect(editor.locator('.cm-line')).toHaveText(['Нотатки', '']);
+  await editor.press('ControlOrMeta+End');
+  await pasteSourceText(editor, 'чернетка');
   await expect(editor.locator('.cm-line')).toHaveText(['Нотатки', 'чернетка']);
 
   await selectFile(page, 'main.typ');
@@ -396,7 +407,9 @@ test('keeps one context tab and preserves a closed file draft and undo history',
   }
   await notesTab.focus();
   await page.keyboard.press('Shift+F10');
-  await page.getByRole('menuitem', { name: 'Закрити всі', exact: true }).click();
+  const closeAll = page.getByRole('menuitem', { name: 'Закрити всі', exact: true });
+  if (testInfo.project.use.hasTouch) await closeAll.tap();
+  else await closeAll.click();
   await expect(tabs.getByRole('tab')).toHaveCount(0);
   await expect(editor).toBeHidden();
   await expect(page.getByRole('heading', { name: 'Немає відкритих файлів' })).toBeVisible();
@@ -440,7 +453,8 @@ test('opens a focused mobile file drawer with folders and handles selection, Esc
   await openWorkspace(page);
   const toggle = page.getByRole('button', { name: 'Показати файли', exact: true });
   await expect(page.getByRole('button', { name: 'main.typ', exact: true })).toBeHidden();
-  await toggle.click();
+  if (testInfo.project.use.hasTouch) await toggle.tap();
+  else await toggle.click();
   const drawer = page.getByRole('dialog', { name: 'Файли', exact: true });
   await expect(drawer).toBeVisible();
   await expect(page.getByRole('button', { name: 'Закрити файли', exact: true })).toBeFocused();
@@ -531,11 +545,11 @@ test('retries an unknown save outcome with the same key and immutable payload', 
   });
   await openWorkspace(page);
   const editor = await sourceEditor(page);
-  await editor.fill('# первісна спроба');
+  await replaceSourceText(editor, '# первісна спроба');
   await expect(
     page.getByRole('button', { name: 'Повторити збереження', exact: true }),
   ).toBeVisible();
-  await editor.fill('# новіший текст');
+  await replaceSourceText(editor, '# новіший текст');
   const retryResponse = page.waitForResponse((response) =>
     response.url().endsWith('/api/projects/1/changes'),
   );
@@ -581,7 +595,7 @@ test('requires explicit conflict comparison and applies a reviewed merge', async
   });
   await openWorkspace(page);
   const editor = await sourceEditor(page);
-  await editor.fill('# Локальний текст\n');
+  await replaceSourceText(editor, '# Локальний текст\n');
   await expect(page.getByRole('button', { name: 'Порівняти версії', exact: true })).toBeVisible();
   expect(batches).toHaveLength(1);
   await page.getByRole('button', { name: 'Порівняти версії', exact: true }).click();
@@ -647,7 +661,7 @@ test('clears a dirty draft when reauthentication switches to another account', a
   });
   await openWorkspace(page);
   const editor = await sourceEditor(page);
-  await editor.fill('# Не втратити цей текст');
+  await replaceSourceText(editor, '# Не втратити цей текст');
   expireSession = true;
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await expect(page).toHaveURL(/\/auth\/login\?returnTo=\/projects\/1/);
@@ -689,7 +703,7 @@ test('restores a dirty draft after the same account signs in again', async ({ pa
     save: async (route) => route.fulfill({ status: 503, json: apiError() }),
   });
   await openWorkspace(page);
-  await (await sourceEditor(page)).fill('# Чернетка того самого акаунта');
+  await replaceSourceText(await sourceEditor(page), '# Чернетка того самого акаунта');
   expireSession = true;
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await expect(page).toHaveURL(/\/auth\/login\?returnTo=\/projects\/1/);
@@ -711,7 +725,7 @@ test('guards dirty route and logout exits with native confirmation', async ({ pa
     save: async (route) => route.fulfill({ status: 503, json: apiError() }),
   });
   await openWorkspace(page);
-  await (await sourceEditor(page)).fill('# Незбережена правка');
+  await replaceSourceText(await sourceEditor(page), '# Незбережена правка');
 
   page.once('dialog', (dialog) => dialog.dismiss());
   await page.getByRole('link', { name: 'Проєкти', exact: true }).click();

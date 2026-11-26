@@ -37,8 +37,15 @@ async function signIn(page: Page) {
   await expect(page.getByRole('heading', { name: 'Ваші проєкти' })).toBeVisible();
 }
 async function action(page: Page, title: string, name: 'Перейменувати' | 'Видалити') {
-  await page.getByRole('button', { name: `Дії: ${title}`, exact: true }).click();
-  await page.getByRole('button', { name, exact: true }).click();
+  const trigger = page.getByRole('button', { name: `Дії: ${title}`, exact: true });
+  const item = page.getByRole('button', { name, exact: true });
+  if (await page.evaluate(() => matchMedia('(pointer: coarse)').matches)) {
+    await trigger.tap();
+    await item.tap();
+  } else {
+    await trigger.click();
+    await item.click();
+  }
   await expect(page.getByRole('dialog')).toBeVisible();
 }
 
@@ -290,14 +297,17 @@ test('opens a project from its full row and keeps row actions separate', async (
   await expect(page).toHaveURL(/\/projects\/10$/);
   await page.goBack();
 
-  await page.getByRole('button', { name: 'Новий проєкт', exact: true }).focus();
-  await page.keyboard.press('Tab');
-  await expect(projectLink).toBeFocused();
-  await page.keyboard.press('Enter');
+  await projectLink.press('Enter');
   await expect(page).toHaveURL(/\/projects\/10$/);
   await page.goBack();
 
-  await page.getByRole('button', { name: 'Дії: Курсова робота', exact: true }).click();
+  const actions = page.getByRole('button', { name: 'Дії: Курсова робота', exact: true });
+  await actions.click();
+  await expect(page.getByRole('button', { name: 'Перейменувати', exact: true })).toBeFocused();
+  await actions.click();
+  await expect(actions).toBeFocused();
+  await expect(actions).toHaveAttribute('aria-expanded', 'false');
+  await actions.click();
   await expect(page).toHaveURL(/\/projects$/);
   await page.getByRole('button', { name: 'Перейменувати', exact: true }).click();
   await expect(page.getByRole('dialog')).toBeVisible();

@@ -31,6 +31,7 @@ const activeActions = ref<number | null>(null);
 const actionMenuLeft = ref(false);
 const dialog = ref<Dialog | null>(null);
 const dialogOpen = ref(false);
+const dialogTrigger = ref<HTMLElement | null>(null);
 const title = ref('');
 const fieldError = ref('');
 const mutationError = ref('');
@@ -128,14 +129,16 @@ function searchChanged() {
 }
 
 async function toggleActions(projectId: number) {
-  activeActions.value = activeActions.value === projectId ? null : projectId;
-  if (activeActions.value !== null) {
-    await nextTick();
-    const button = document.getElementById(`project-action-button-${projectId}`);
-    const card = button?.closest('.project-card');
-    actionMenuLeft.value = card ? card.getBoundingClientRect().right - 190 < 8 : false;
-    document.getElementById(`project-actions-${projectId}`)?.querySelector('button')?.focus();
+  if (activeActions.value === projectId) {
+    escapeActions();
+    return;
   }
+  activeActions.value = projectId;
+  await nextTick();
+  const button = document.getElementById(`project-action-button-${projectId}`);
+  const card = button?.closest('.project-card');
+  actionMenuLeft.value = card ? card.getBoundingClientRect().right - 190 < 8 : false;
+  document.getElementById(`project-actions-${projectId}`)?.querySelector('button')?.focus();
 }
 function closeActions(event: PointerEvent) {
   if (!(event.target instanceof Element) || !event.target.closest('.project-actions'))
@@ -156,8 +159,9 @@ function escapeActions() {
 }
 function openDialog(value: Dialog) {
   if (loading.value) return;
-  if (value.kind !== 'create')
-    document.getElementById(`project-action-button-${value.project.id}`)?.focus();
+  dialogTrigger.value = document.getElementById(
+    value.kind === 'create' ? 'new-project' : `project-action-button-${value.project.id}`,
+  );
   activeActions.value = null;
   fieldError.value = '';
   mutationError.value = '';
@@ -367,6 +371,7 @@ onBeforeUnmount(() => {
         </RouterLink>
         <div
           class="project-actions"
+          @mousedown.left.prevent
           @focusout="leaveActions"
           @keydown.esc.stop.prevent="escapeActions"
         >
@@ -427,6 +432,7 @@ onBeforeUnmount(() => {
       :open="dialogOpen"
       :title="dialogTitle"
       :busy="busy"
+      :return-focus="dialogTrigger"
       @dismiss="dismiss"
       @closed="closed"
     >
